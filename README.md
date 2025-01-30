@@ -1,7 +1,6 @@
 favicon
 =======
-
-[![hacs_badge](https://img.shields.io/badge/HACS-Default-orange.svg)](https://github.com/custom-components/hacs)
+[![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/hacs/integration)
 
 Change the gui page title, favicon and app icons of your Home Assistant instance
 
@@ -9,57 +8,58 @@ Change the gui page title, favicon and app icons of your Home Assistant instance
 
 # Installation instructions
 
-- Copy the contents of `custom_components/favicon/` to `<your config dir>/custom_components/favicon/`.
+*  Go to HACS
 
-- Get some icons
+*  Add as a Custom Repository: https://github.com/Snuffy2/hass-favicon
 
-  There are some nice ones available [here](https://github.com/home-assistant/iOS/tree/master/icons/Alternates), and you can generate favicons from them using an online tool, such as [this one](https://realfavicongenerator.net/).
+*  Download `hass-favicon (Snuffy2)`
 
-- Put your icons in e.g. `<your config dir>/www/favicons/`. Note that `<your config dir>/www/` translates to `/local/` for the Icon path.
-Note: If you created `<your config dir>/www/` you need to restart Home Assistant once before any icons will be found.
+*  Restart Home Assistant
+
+*  Get some icons
+
+    *  There are some nice ones available [here](https://github.com/home-assistant/iOS/tree/master/icons/Alternates)
+  
+    *  You can generate favicons from them using an online tool, such as [this one](https://realfavicongenerator.net/).
+
+*  Put your icons in e.g. `<your config dir>/www/favicons/`. Note that `<your config dir>/www/` translates to `/local/` for the Icon path.
+
+*  If you created `<your config dir>/www/` you need to restart Home Assistant once before any icons will be found.
 
 ### About the icons
+
 `hass-favicon` will scan the specified directory and automatically apply icons when found based on their filename. There are three types of icons, and it's important that you get the filenames correct.
 
-- `favicon.ico` - The icon which is displayed on the browser tab and in the bookmark menu
-- `favicon-apple-<anything>.png` - The icon which is displayed if you save your interface to the home screen of your iDevice.
-- `favicon-<size>x<size>.png` - Used by android devices. `<size>` indicates the icon size in pixels, e.g. `favicon-1024x1024.png`.
+*  `favicon.ico` - The icon which is displayed on the browser tab and in the bookmark menu
 
-## Method 1/2 Integration
+*  `favicon-apple-<anything>.png` - The icon which is displayed if you save your interface to the home screen of your iDevice.
 
-- Go to your Home Assistant configuration and to Integrations
+*  `favicon-<size>x<size>.png` - Used by android devices. `<size>` indicates the icon size in pixels, e.g. `favicon-1024x1024.png`.
 
-- Add a "Favicon" integration
+## Add Integration
 
-- Enter your wanted title and the path to your icons. E.g. `Icon path: /local/favicons/`
+[![Open your Home Assistant instance and install hass-favicon.](https://my.home-assistant.io/badges/brand.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=hass-favicon)
 
-- Press submit
+OR 
 
-- Refresh the page. Make sure to clear the cache of your browser to get the new icons.
+*  Go to your Home Assistant configuration and to Integrations
+
+*  Add a "Favicon" integration
+
+-----
+
+*  Enter your wanted title and the path to your icons. E.g. `Icon path: /local/favicons/`
+
+*  Press submit
+
+*  Refresh the page. Make sure to clear the cache of your browser to get the new icons.
 
 ![integration](https://user-images.githubusercontent.com/1299821/65991117-1d068900-e48d-11e9-9002-f2253fafa190.gif)
 
-## Method 2/2 YAML configuration
-
-- Add the following to your `configuration.yaml`:
-
-```yaml
-favicon:
-  title: My Home
-  icon_path: /local/favicons/
-```
-
-- Restart Home Assistant
-
-- Make sure to clear the cache of your browser to get the new icons.
-
 ### Options
 
-- `title` - The title to display at the top of the window or browser tab.
+*  `title` - The title to display at the top of the window or browser tab.
 
-- `icon_path:` - The path (frontend path) of the directory containing your icons.
+*  `icon_path:` - The path (frontend path) of the directory containing your icons.
 
-![it IS charging thankyouverymuch](https://user-images.githubusercontent.com/1299821/62975899-c29d6480-be1b-11e9-9b6b-9d160ef8b439.jpg)
-
----
-<a href="https://www.buymeacoffee.com/uqD6KHCdJ" target="_blank"><img src="https://www.buymeacoffee.com/assets/img/custom_images/white_img.png" alt="Buy Me A Coffee" style="height: auto !important;width: auto !important;" ></a>
+![](https://user-images.githubusercontent.com/1299821/62975899-c29d6480-be1b-11e9-9b6b-9d160ef8b439.jpg)
