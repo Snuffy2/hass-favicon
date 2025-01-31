@@ -1,6 +1,6 @@
 {
   "domain": "favicon",
-  "name": "Favicon changer",
+  "name": "Favicon Changer (Snuffy2)",
   "codeowners": ["@Snuffy2", "@thomasloven"],
   "config_flow": true,
   "dependencies": ["frontend"],
