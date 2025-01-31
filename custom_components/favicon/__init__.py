@@ -11,7 +11,7 @@ from homeassistant.config_entries import ConfigEntry, ConfigType
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 
-from .const import CONF_ICON_PATH, CONF_TITLE, DOMAIN
+from .const import CONF_ICON_COLOR, CONF_ICON_PATH, CONF_KEYS, CONF_TITLE, DOMAIN
 
 _LOGGER: logging.Logger = logging.getLogger(__name__)
 
@@ -37,10 +37,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     conf = config.get(DOMAIN)
     if not conf:
         return True
-    if CONF_ICON_PATH in hass.data[DOMAIN]:
-        del hass.data[DOMAIN][CONF_ICON_PATH]
-    if CONF_TITLE in hass.data[DOMAIN]:
-        del hass.data[DOMAIN][CONF_TITLE]
+    for key in CONF_KEYS:
+        if key in hass.data[DOMAIN]:
+            del hass.data[DOMAIN][key]
     hass.data[DOMAIN].update(conf)
     return await apply_hooks(hass)
 
@@ -69,10 +68,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def _update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     _LOGGER.debug("[update_listener] Starting")
     conf = config_entry.options
-    if CONF_ICON_PATH in hass.data[DOMAIN]:
-        del hass.data[DOMAIN][CONF_ICON_PATH]
-    if CONF_TITLE in hass.data[DOMAIN]:
-        del hass.data[DOMAIN][CONF_TITLE]
+    for key in CONF_KEYS:
+        if key in hass.data[DOMAIN]:
+            del hass.data[DOMAIN][key]
     hass.data[DOMAIN].update(conf)
     return await apply_hooks(hass, dict(config_entry.data))
 
@@ -124,6 +122,7 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
         None, find_icons, hass, config_data.get(CONF_ICON_PATH, None)
     )
     title = config_data.get(CONF_TITLE, None)
+    launch_icon_color = config_data.get(CONF_ICON_COLOR, None)
     data = hass.data.get(DOMAIN, {})
 
     def _get_template(self):
@@ -162,6 +161,12 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
                         </script>
                     """,  # noqa: E501
                 )
+            if launch_icon_color:
+                text = text.replace(
+                    '<link rel="mask-icon" href="/static/icons/mask-icon.svg" color="#18bcf2">',
+                    f'<link rel="mask-icon" href="/static/icons/mask-icon.svg" color="{launch_icon_color}">',
+                )
+                text = text.replace('<path fill="#18BCF2" ', f'<path fill="{launch_icon_color}" ')
 
             return text
 

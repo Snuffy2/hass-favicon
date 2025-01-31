@@ -11,7 +11,15 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.core import callback
 
-from .const import CONF_ICON_PATH, CONF_TITLE, DEFAULT_ICON_PATH, DEFAULT_TITLE, DOMAIN
+from .const import (
+    CONF_ICON_COLOR,
+    CONF_ICON_PATH,
+    CONF_TITLE,
+    DEFAULT_ICON_COLOR,
+    DEFAULT_ICON_PATH,
+    DEFAULT_TITLE,
+    DOMAIN,
+)
 
 _LOGGER: logging.Logger = logging.getLogger(__name__)
 
@@ -39,6 +47,7 @@ def _get_schema(
         {
             vol.Required(CONF_TITLE, default=_get_default(CONF_TITLE)): str,
             vol.Required(CONF_ICON_PATH, default=_get_default(CONF_ICON_PATH)): str,
+            vol.Required(CONF_ICON_COLOR): str,  # TODO: Make color selector
         },
     )
 
@@ -59,6 +68,7 @@ class FaviconConfigFlow(ConfigFlow, domain=DOMAIN):
         input_defaults: MutableMapping[str, Any] = {
             CONF_TITLE: DEFAULT_TITLE,
             CONF_ICON_PATH: DEFAULT_ICON_PATH,
+            CONF_ICON_COLOR: DEFAULT_ICON_COLOR,
         }
 
         if user_input is not None:
