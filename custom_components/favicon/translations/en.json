@@ -2,7 +2,7 @@
   "title": "Favicon",
   "config": {
     "step": {
-      "config": {
+      "user": {
         "title": "Favicon changer",
         "description": "Set the page title, and path to icons.",
         "data": {
