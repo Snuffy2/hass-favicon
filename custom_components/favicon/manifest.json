@@ -1,10 +1,12 @@
 {
   "domain": "favicon",
   "name": "Favicon changer",
-  "documentation": "https://github.com/thomasloven/hass-favicon",
-  "dependencies": ["frontend"],
-  "codeowners": [],
-  "requirements": [],
+  "codeowners": ["@Snuffy2", "@thomasloven"],
   "config_flow": true,
-  "version": "10.4"
+  "dependencies": ["frontend"],
+  "documentation": "https://github.com/Snuffy2/hass-favicon",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/Snuffy2/hass-favicon/issues",
+  "version":"v10.4"
 }

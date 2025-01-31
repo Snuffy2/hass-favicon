@@ -1,4 +1,5 @@
 import logging
+
 import voluptuous as vol
 
 from homeassistant import config_entries
@@ -16,15 +17,14 @@ class ConfigFlow(config_entries.ConfigFlow):
 
     async def async_step_config(self, user_input=None):
         if user_input is not None:
-            return self.async_create_entry(
-                    title="", data=user_input)
+            return self.async_create_entry(title="", data=user_input)
 
         return self.async_show_form(
-            step_id='config',
+            step_id="config",
             data_schema=vol.Schema(
                 {
-                    vol.Optional('title'): str,
-                    vol.Optional('icon_path'): str,
+                    vol.Optional("title"): str,
+                    vol.Optional("icon_path"): str,
                 }
             ),
         )
@@ -36,7 +36,6 @@ class ConfigFlow(config_entries.ConfigFlow):
 
 
 class EditFlow(config_entries.OptionsFlow):
-
     def __init__(self, config_entry):
         self.config_entry = config_entry
 
@@ -45,22 +44,20 @@ class EditFlow(config_entries.OptionsFlow):
             _LOGGER.error(user_input)
             return self.async_create_entry(title="", data=user_input)
         return self.async_show_form(
-            step_id='init',
+            step_id="init",
             data_schema=vol.Schema(
                 {
                     vol.Optional(
-                        'title',
+                        "title",
                         description={
-                            "suggested_value":
-                                self.config_entry.options.get("title", ""),
-                        }
+                            "suggested_value": self.config_entry.options.get("title", ""),
+                        },
                     ): str,
                     vol.Optional(
-                        'icon_path',
+                        "icon_path",
                         description={
-                            "suggested_value":
-                                self.config_entry.options.get("icon_path", ""),
-                        }
+                            "suggested_value": self.config_entry.options.get("icon_path", ""),
+                        },
                     ): str,
                 }
             ),

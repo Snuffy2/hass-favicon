@@ -1,10 +1,9 @@
+from collections import defaultdict
 import logging
 import os
 import re
-from collections import defaultdict
 
-import homeassistant.components.frontend as frontend
-
+from homeassistant.components import frontend
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,8 +23,7 @@ async def async_setup(hass, config):
     if not hass.data[DOMAIN].get("get_template"):
         hass.data[DOMAIN]["get_template"] = frontend.IndexView.get_template
     if not hass.data[DOMAIN].get("manifest_icons"):
-        hass.data[DOMAIN]["manifest_icons"] = \
-            frontend.MANIFEST_JSON["icons"].copy()
+        hass.data[DOMAIN]["manifest_icons"] = frontend.MANIFEST_JSON["icons"].copy()
 
     conf = config.get(DOMAIN)
     if not conf:
@@ -60,13 +58,12 @@ async def _update_listener(hass, config_entry):
 
 
 def find_icons(hass, path):
-
     icons = {}
     manifest = []
     if not path or not path.startswith("/local/"):
         return icons
 
-    localpath = "www" + path[len("/local"):]
+    localpath = "www" + path[len("/local") :]
     localpath = hass.config.path(localpath)
     _LOGGER.info("Looking for icons in: %s", localpath)
     try:
@@ -80,11 +77,13 @@ def find_icons(hass, path):
                 _LOGGER.info("Found apple icon: %s", os.path.join(path, fn))
             icon = re.search(RE_ICON, fn)
             if icon:
-                manifest.append({
-                    "src": os.path.join(path, fn),
-                    "sizes": icon.group(1),
-                    "type": "image/png",
-                    })
+                manifest.append(
+                    {
+                        "src": os.path.join(path, fn),
+                        "sizes": icon.group(1),
+                        "type": "image/png",
+                    }
+                )
                 _LOGGER.info("Found icon: %s", os.path.join(path, fn))
     except Exception:
         pass
@@ -97,11 +96,8 @@ def find_icons(hass, path):
 async def apply_hooks(hass):
     data = hass.data.get(DOMAIN, {})
     icons = await hass.loop.run_in_executor(
-        None,
-        find_icons,
-        hass,
-        data.get(CONFIG_ICON_PATH, None)
-        )
+        None, find_icons, hass, data.get(CONFIG_ICON_PATH, None)
+    )
     title = data.get(CONFIG_TITLE, None)
 
     def _get_template(self):
@@ -111,20 +107,11 @@ async def apply_hooks(hass):
         def new_render(*args, **kwargs):
             text = render(*args, **kwargs)
             if "favicon" in icons:
-                text = text.replace(
-                    "/static/icons/favicon.ico",
-                    icons["favicon"]
-                )
+                text = text.replace("/static/icons/favicon.ico", icons["favicon"])
             if "apple" in icons:
-                text = text.replace(
-                    "/static/icons/favicon-apple-180x180.png",
-                    icons["apple"]
-                )
+                text = text.replace("/static/icons/favicon-apple-180x180.png", icons["apple"])
             if title:
-                text = text.replace(
-                    "<title>Home Assistant</title>",
-                    f"<title>{title}</title>"
-                )
+                text = text.replace("<title>Home Assistant</title>", f"<title>{title}</title>")
                 text = text.replace(
                     "<body>",
                     f"""
@@ -145,7 +132,7 @@ async def apply_hooks(hass):
                                 }}
                             }}, 1000);
                         </script>
-                    """  # noqa: E501
+                    """,  # noqa: E501
                 )
 
             return text
