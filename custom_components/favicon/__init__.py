@@ -161,12 +161,23 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
                         </script>
                     """,  # noqa: E501
                 )
+
             if launch_icon_color:
-                text = text.replace(
-                    '<link rel="mask-icon" href="/static/icons/mask-icon.svg" color="#18bcf2">',
-                    f'<link rel="mask-icon" href="/static/icons/mask-icon.svg" color="{launch_icon_color}">',
+                # Regex to match hex color codes (e.g., #18bcf2, #123ABC)
+                hex_color_pattern = r"#(?:[0-9a-fA-F]{6})"
+
+                text = re.sub(
+                    r'(<link rel="mask-icon" href="/static/icons/mask-icon\.svg" color=")'
+                    + hex_color_pattern
+                    + r'(">)',
+                    rf"\1{launch_icon_color}\2",
+                    text,
                 )
-                text = text.replace('<path fill="#18BCF2" ', f'<path fill="{launch_icon_color}" ')
+                text = re.sub(
+                    r'(<path fill=")' + hex_color_pattern + r'(")',
+                    rf"\1{launch_icon_color}\2",
+                    text,
+                )
 
             return text
 

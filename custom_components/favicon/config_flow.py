@@ -10,6 +10,7 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.core import callback
+from homeassistant.helpers import selector
 
 from .const import (
     CONF_ICON_COLOR,
@@ -22,6 +23,25 @@ from .const import (
 )
 
 _LOGGER: logging.Logger = logging.getLogger(__name__)
+
+
+def rgb_list_to_hex(rgb: list[int]) -> str | None:
+    """Convert a rgb list color to a hex string."""
+    if len(rgb) != 3 or not all(0 <= x <= 255 for x in rgb):
+        return None
+    hex_str: str = ("{:02X}" * 3).format(rgb[0], rgb[1], rgb[2]).lower()
+    if not hex_str.startswith("#"):
+        hex_str = f"#{hex_str}"
+    _LOGGER.debug("[rgb_list_to_hex] rgb: %s, hex: %s", rgb, hex_str)
+    return hex_str
+
+
+def hex_to_rgb_list(hex_str: str) -> list[int]:
+    """Convert a hex color to rbg as a list."""
+    hex_str = hex_str.lstrip("#").upper()
+    rgb: list[int] = [int(hex_str[i : i + 2], 16) for i in (0, 2, 4)]
+    _LOGGER.debug("[hex_to_rgb_list] hex: #%s, rgb: %s", hex_str, rgb)
+    return rgb
 
 
 def _get_schema(
@@ -43,16 +63,28 @@ def _get_schema(
             default = fallback_default
         return default
 
+    default_color: str | list[int] | None = _get_default(CONF_ICON_COLOR)
+    if isinstance(default_color, str):
+        default_color = hex_to_rgb_list(hex_str=default_color)
     return vol.Schema(
         {
             vol.Required(CONF_TITLE, default=_get_default(CONF_TITLE)): str,
             vol.Required(CONF_ICON_PATH, default=_get_default(CONF_ICON_PATH)): str,
-            vol.Required(CONF_ICON_COLOR): str,  # TODO: Make color selector
+            vol.Required(CONF_ICON_COLOR, default=default_color): selector.ColorRGBSelector(
+                selector.ColorRGBSelectorConfig()
+            ),
         },
     )
 
 
-# @config_entries.HANDLERS.register("favicon")
+def _convert_color_to_hex(user_input: MutableMapping[str, Any]) -> None:
+    """Convert RGB color list to hex string in user input."""
+    if isinstance(user_input[CONF_ICON_COLOR], list):
+        color_hex = rgb_list_to_hex(rgb=user_input[CONF_ICON_COLOR])
+        if color_hex:
+            user_input[CONF_ICON_COLOR] = color_hex
+
+
 class FaviconConfigFlow(ConfigFlow, domain=DOMAIN):
     """Config Flow for hass-favicon integration."""
 
@@ -72,6 +104,7 @@ class FaviconConfigFlow(ConfigFlow, domain=DOMAIN):
         }
 
         if user_input is not None:
+            _convert_color_to_hex(user_input)
             _LOGGER.debug("[Config Flow async_step_user] user_input: %s", user_input)
             return self.async_create_entry(title="favicon", data=user_input)
 
@@ -102,8 +135,8 @@ class FaviconOptionsFlowHandler(OptionsFlow):
         """Manage the options."""
         errors: MutableMapping[str, Any] = {}
         if user_input is not None:
+            _convert_color_to_hex(user_input)
             _LOGGER.debug("[Options async_step_init] user_input: %s", user_input)
-            # return self.async_create_entry(title="", data=user_input)
             self.hass.config_entries.async_update_entry(
                 self.config_entry, data=user_input, options=self.config_entry.options
             )
