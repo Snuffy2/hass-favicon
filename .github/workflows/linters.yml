@@ -17,6 +17,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: 3.x
+      - name: Create mypy Cache
+        run: mkdir .mypy_cache
       - name: Cache pip dependencies
         uses: actions/cache@v4
         with:
@@ -32,4 +34,4 @@ jobs:
         uses: pre-commit-ci/lite-action@v1.1.0
         if: always()
       - name: Run mypy
-        run: mypy "./custom_components/hass-favicon/" --install-types --non-interactive --config-file pyproject.toml
+        run: mypy "./custom_components/favicon/" --install-types --non-interactive --config-file pyproject.toml
