@@ -77,12 +77,20 @@ def _get_schema(
     )
 
 
-def _convert_color_to_hex(user_input: MutableMapping[str, Any]) -> None:
+async def _convert_color_to_hex(user_input: MutableMapping[str, Any]) -> None:
     """Convert RGB color list to hex string in user input."""
     if isinstance(user_input[CONF_ICON_COLOR], list):
         color_hex = rgb_list_to_hex(rgb=user_input[CONF_ICON_COLOR])
         if color_hex:
             user_input[CONF_ICON_COLOR] = color_hex
+
+
+async def validate_input(user_input: MutableMapping[str, Any], errors: dict[str, Any]) -> None:
+    """Validate user input."""
+    await _convert_color_to_hex(user_input)
+    if not user_input.get(CONF_ICON_PATH, "").startswith("/local/"):
+        errors["base"] = "bad_path"
+        return
 
 
 class FaviconConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -96,7 +104,7 @@ class FaviconConfigFlow(ConfigFlow, domain=DOMAIN):
         """Handle the initial step."""
         if self._async_current_entries():
             return self.async_abort(reason="single_instance_allowed")
-        errors: MutableMapping[str, Any] = {}
+        errors: dict[str, Any] = {}
         input_defaults: MutableMapping[str, Any] = {
             CONF_TITLE: DEFAULT_TITLE,
             CONF_ICON_PATH: DEFAULT_ICON_PATH,
@@ -104,9 +112,11 @@ class FaviconConfigFlow(ConfigFlow, domain=DOMAIN):
         }
 
         if user_input is not None:
-            _convert_color_to_hex(user_input)
+            await validate_input(user_input, errors)
+
             _LOGGER.debug("[Config Flow async_step_user] user_input: %s", user_input)
-            return self.async_create_entry(title="favicon", data=user_input)
+            if not errors:
+                return self.async_create_entry(title="favicon", data=user_input)
 
         return self.async_show_form(
             step_id="user",
@@ -133,15 +143,16 @@ class FaviconOptionsFlowHandler(OptionsFlow):
         self, user_input: MutableMapping[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Manage the options."""
-        errors: MutableMapping[str, Any] = {}
+        errors: dict[str, Any] = {}
         if user_input is not None:
-            _convert_color_to_hex(user_input)
+            await validate_input(user_input, errors)
             _LOGGER.debug("[Options async_step_init] user_input: %s", user_input)
-            self.hass.config_entries.async_update_entry(
-                self.config_entry, data=user_input, options=self.config_entry.options
-            )
-            await self.hass.config_entries.async_reload(self.config_entry.entry_id)
-            return self.async_create_entry(title="", data={})
+            if not errors:
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry, data=user_input, options=self.config_entry.options
+                )
+                await self.hass.config_entries.async_reload(self.config_entry.entry_id)
+                return self.async_create_entry(title="", data={})
         return self.async_show_form(
             step_id="init",
             data_schema=_get_schema(user_input=dict(self.config_entry.data)),

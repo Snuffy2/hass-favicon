@@ -1,13 +1,16 @@
 {
   "title": "Favicon",
   "config": {
+    "error": {
+      "bad_path": "Icon path must start with /local/"
+    },
     "step": {
       "user": {
         "title": "Favicon changer",
         "description": "Set the page title, path to icons, and launch icon color.",
         "data": {
           "title": "Page title",
-          "icon_path": "Icon path",
+          "icon_path": "Icon path (must start with /local/)",
           "launch_icon_color": "Launch icon color"
         }
       }
@@ -17,11 +20,14 @@
     }
   },
   "options": {
+    "error": {
+      "bad_path": "Icon path must start with /local/"
+    },
     "step": {
       "init": {
         "data": {
           "title": "Page title",
-          "icon_path": "Icon path",
+          "icon_path": "Icon path (must start with /local/)",
           "launch_icon_color": "Launch icon color"
         }
       }
