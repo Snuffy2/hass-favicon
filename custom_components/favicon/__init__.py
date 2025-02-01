@@ -123,7 +123,7 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
     launch_icon_color = config_data.get(CONF_ICON_COLOR, None)
     data = hass.data.get(DOMAIN, {})
 
-    def _get_template(self):
+    def _get_template(self) -> Template:
         tpl: Template = data["get_template"](self)
         render: Callable[..., str] = tpl.render
 
