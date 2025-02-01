@@ -21,11 +21,11 @@ jobs:
       - name: Update Version in Manifest
         if: ${{ github.event_name == 'release' && github.event.release.draft == false }}
         run: |
-          sed -i 's/\"version\"\s*\:\s*\".*\"/\"version\"\:\"${{ github.ref_name }}\"/g' ./custom_components/hass-favicon/manifest.json
+          sed -i 's/\"version\"\s*\:\s*\".*\"/\"version\"\:\"${{ github.ref_name }}\"/g' ./custom_components/favicon/manifest.json
       - name: Update Version in const.py
         if: ${{ github.event_name == 'release' && github.event.release.draft == false }}
         run: |
-          sed -i 's/^VERSION \= \".*\"/VERSION \= \"${{ github.ref_name }}\"/' ./custom_components/hass-favicon/const.py
+          sed -i 's/^VERSION \= \".*\"/VERSION \= \"${{ github.ref_name }}\"/' ./custom_components/favicon/const.py
       - name: Commit & Push Version Changes
         if: ${{ github.event_name == 'release' && github.event.release.draft == false && github.event.release.prerelease == false  }}
         uses: actions-js/push@master
@@ -44,12 +44,12 @@ jobs:
         with:
           type: 'zip'
           filename: 'hass-favicon.zip'
-          directory: ./custom_components/hass-favicon
+          directory: ./custom_components/favicon
       - name: Upload Zip to Release
         if: ${{ github.event_name == 'release' && github.event.release.draft == false }}
         uses: Roang-zero1/github-upload-release-artifacts-action@v3.0.0
         with:
-          args: ./custom_components/hass-favicon/hass-favicon.zip
+          args: ./custom_components/favicon/hass-favicon.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Add Zip to Action
@@ -57,5 +57,5 @@ jobs:
         uses: actions/upload-artifact@v4.6.0
         with:
           name: hass-favicon
-          path: ./custom_components/hass-favicon/hass-favicon.zip
+          path: ./custom_components/favicon/hass-favicon.zip
           if-no-files-found: error
