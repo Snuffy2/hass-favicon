@@ -2,7 +2,7 @@ favicon
 =======
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/hacs/integration)
 
-Change the gui page title, favicon and app icons of your Home Assistant instance
+Change the gui page title, favicon, app icons, and launch icon color of your Home Assistant instance
 
 ![browser](https://user-images.githubusercontent.com/1299821/62975860-ad283a80-be1b-11e9-836a-d58a1732fb21.png)
 

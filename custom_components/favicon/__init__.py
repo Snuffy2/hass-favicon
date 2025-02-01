@@ -13,7 +13,7 @@ from homeassistant.config_entries import ConfigEntry, ConfigType
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 
-from .const import CONF_ICON_PATH, CONF_TITLE, DOMAIN
+from .const import CONF_ICON_COLOR, CONF_ICON_PATH, CONF_KEYS, CONF_TITLE, DOMAIN
 
 _LOGGER: logging.Logger = logging.getLogger(__name__)
 
@@ -25,7 +25,6 @@ CONFIG_SCHEMA: Callable[[dict], dict] = cv.empty_config_schema(DOMAIN)
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Initial hass-favicon setup."""
-    _LOGGER.debug("[async_setup] Starting")
     if not hass.data.get(DOMAIN):
         hass.data.setdefault(DOMAIN, {})
 
@@ -39,17 +38,16 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     conf = config.get(DOMAIN)
     if not conf:
         return True
-    if CONF_ICON_PATH in hass.data[DOMAIN]:
-        del hass.data[DOMAIN][CONF_ICON_PATH]
-    if CONF_TITLE in hass.data[DOMAIN]:
-        del hass.data[DOMAIN][CONF_TITLE]
+    for key in CONF_KEYS:
+        if key in hass.data[DOMAIN]:
+            del hass.data[DOMAIN][key]
     hass.data[DOMAIN].update(conf)
     return await apply_hooks(hass)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up from a config entry."""
-    _LOGGER.debug("[async_setup_entry] Starting. entry.data: %s", entry.data)
+    _LOGGER.debug("[async_setup_entry] entry.data: %s", entry.data)
     if not hass.data.get(DOMAIN):
         hass.data.setdefault(DOMAIN, {})
     entry.add_update_listener(_update_listener)
@@ -58,7 +56,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_remove_entry(hass: HomeAssistant, _: ConfigEntry) -> bool:
     """Run before unload."""
-    _LOGGER.debug("[async_remove_entry] Starting")
     return remove_hooks(hass)
 
 
@@ -69,12 +66,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
-    _LOGGER.debug("[update_listener] Starting")
     conf = config_entry.options
-    if CONF_ICON_PATH in hass.data[DOMAIN]:
-        del hass.data[DOMAIN][CONF_ICON_PATH]
-    if CONF_TITLE in hass.data[DOMAIN]:
-        del hass.data[DOMAIN][CONF_TITLE]
+    for key in CONF_KEYS:
+        if key in hass.data[DOMAIN]:
+            del hass.data[DOMAIN][key]
     hass.data[DOMAIN].update(conf)
     return await apply_hooks(hass, dict(config_entry.data))
 
@@ -82,7 +77,6 @@ async def _update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> bo
 def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping:
     """Find icons in folder."""
 
-    _LOGGER.debug("[find_icons] Starting")
     icons: MutableMapping = {}
     manifest: list = []
     if not path_str or not path_str.startswith("/local/"):
@@ -121,11 +115,12 @@ def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping:
 
 async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]) -> bool:
     """Apply hooks."""
-    _LOGGER.debug("[apply_hooks] Starting")
     icons = await hass.loop.run_in_executor(
         None, find_icons, hass, config_data.get(CONF_ICON_PATH, None)
     )
+    _LOGGER.debug("[apply_hooks] icons: %s", icons)
     title = config_data.get(CONF_TITLE, None)
+    launch_icon_color = config_data.get(CONF_ICON_COLOR, None)
     data = hass.data.get(DOMAIN, {})
 
     def _get_template(self):
@@ -134,6 +129,7 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
 
         def new_render(*args, **kwargs) -> str:
             text: str = render(*args, **kwargs)
+            _LOGGER.debug("[new_render] original text: %s", text)
             if "favicon" in icons:
                 text = text.replace("/static/icons/favicon.ico", str(icons["favicon"]))
             if "apple" in icons:
@@ -163,6 +159,24 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
                     """,  # noqa: E501
                 )
 
+            if launch_icon_color:
+                # Regex to match hex color codes (e.g., #18bcf2, #123ABC)
+                hex_color_pattern = r"#(?:[0-9a-fA-F]{6})"
+
+                text = re.sub(
+                    r'(<link rel="mask-icon" href="/static/icons/mask-icon\.svg" color=")'
+                    + hex_color_pattern
+                    + r'(">)',
+                    rf"\1{launch_icon_color}\2",
+                    text,
+                )
+                text = re.sub(
+                    rf'(<path fill="){hex_color_pattern}(")',
+                    rf"\1{launch_icon_color}\2",
+                    text,
+                    count=1,  # Only replace the first occurrence
+                )
+
             return text
 
         tpl.render = new_render
@@ -190,7 +204,6 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
 
 def remove_hooks(hass) -> bool:
     """Remove hooks."""
-    _LOGGER.debug("[remove_hooks] Starting")
     data = hass.data[DOMAIN]
     frontend.IndexView.get_template = data["get_template"]
     frontend.add_manifest_json_key("icons", data["manifest_icons"].copy())
