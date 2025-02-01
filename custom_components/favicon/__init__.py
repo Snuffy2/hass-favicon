@@ -6,6 +6,8 @@ from pathlib import Path
 import re
 from typing import Any
 
+from jinja2 import Template
+
 from homeassistant.components import frontend
 from homeassistant.config_entries import ConfigEntry, ConfigType
 from homeassistant.core import HomeAssistant
@@ -121,14 +123,12 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
     launch_icon_color = config_data.get(CONF_ICON_COLOR, None)
     data = hass.data.get(DOMAIN, {})
 
-    def _get_template(self):
-        tpl = data["get_template"](self)
-        _LOGGER.debug("[get_template] tpl (%s): %s", type(tpl), tpl)
-        render = tpl.render
-        _LOGGER.debug("[get_template] render (%s): %s", type(render), render)
+    def _get_template(self) -> Template:
+        tpl: Template = data["get_template"](self)
+        render: Callable[..., str] = tpl.render
 
         def new_render(*args, **kwargs) -> str:
-            text = render(*args, **kwargs)
+            text: str = render(*args, **kwargs)
             _LOGGER.debug("[new_render] original text: %s", text)
             if "favicon" in icons:
                 text = text.replace("/static/icons/favicon.ico", str(icons["favicon"]))
