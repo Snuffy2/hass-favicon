@@ -1,6 +1,6 @@
 """hass-favicon Constants."""
 
-VERSION = "v10.4"
+VERSION = "v10.5.0"
 DOMAIN = "favicon"
 
 CONF_TITLE = "title"

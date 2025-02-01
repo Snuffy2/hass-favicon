@@ -8,5 +8,5 @@
   "integration_type": "device",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/Snuffy2/hass-favicon/issues",
-  "version":"v10.4"
+  "version":"v10.5.0"
 }
