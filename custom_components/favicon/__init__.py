@@ -15,9 +15,8 @@ from homeassistant.components import frontend
 from homeassistant.config_entries import ConfigEntry, ConfigType
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
-import voluptuous as vol
 
-from .const import CONF_ICON_COLOR, CONF_ICON_PATH, CONF_KEYS, CONF_TITLE, DOMAIN
+from .const import CONF_ICON_COLOR, CONF_ICON_PATH, CONF_TITLE, DOMAIN
 
 _LOGGER: logging.Logger = logging.getLogger(__name__)
 _APPLY_GENERATION = "_apply_generation"
@@ -26,26 +25,11 @@ _ACTIVE_ENTRY_LIFETIME = "_active_entry_lifetime"
 RE_APPLE = r"^favicon-apple-"
 RE_ICON = r"^favicon-(\d+x\d+)\..+"
 
-CONFIG_SCHEMA: vol.Schema = vol.Schema(
-    {
-        vol.Optional(DOMAIN): vol.Any(
-            None,
-            vol.Schema(
-                {
-                    vol.Optional(CONF_TITLE): cv.string,
-                    vol.Optional(CONF_ICON_PATH): cv.string,
-                    vol.Optional(CONF_ICON_COLOR): vol.Any(None, cv.string),
-                },
-                extra=vol.ALLOW_EXTRA,
-            ),
-        )
-    },
-    extra=vol.ALLOW_EXTRA,
-)
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Initialize hass-favicon and apply YAML settings when present.
+    """Initialize shared frontend state for config-entry setup.
 
     Args:
         hass (HomeAssistant): Home Assistant instance.
@@ -68,15 +52,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     _LOGGER.debug("[async_setup] resolve: %s", hass.data[DOMAIN]["resolve"])
     _LOGGER.debug("[async_setup] manifest_icons: %s", hass.data[DOMAIN]["manifest_icons"])
 
-    conf = config.get(DOMAIN)
-    hass.data[DOMAIN]["yaml_config"] = dict(conf) if conf else {}
-    if not conf:
-        return True
-    for key in CONF_KEYS:
-        if key in hass.data[DOMAIN]:
-            del hass.data[DOMAIN][key]
-    hass.data[DOMAIN].update(conf)
-    return await apply_hooks(hass, dict(conf))
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -112,18 +88,7 @@ async def async_remove_entry(hass: HomeAssistant, _: ConfigEntry) -> bool:
     Returns:
         bool: Whether the original frontend was restored.
     """
-    data = hass.data.get(DOMAIN, {})
-    entry_lifetime = data.get(_ACTIVE_ENTRY_LIFETIME)
-    completed = False
-    try:
-        restored = await _restore_configured_hooks(hass)
-        completed = True
-        return restored
-    finally:
-        if not completed and data.get(_ACTIVE_ENTRY_LIFETIME) is entry_lifetime:
-            # Home Assistant removes the entry even if this callback fails.
-            data.pop(_ACTIVE_ENTRY_LIFETIME, None)
-            remove_hooks(hass)
+    return remove_hooks(hass)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -137,7 +102,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         bool: Whether unloading succeeded.
     """
     _LOGGER.info("Unloading: %s", entry.data)
-    return await _restore_configured_hooks(hass)
+    return remove_hooks(hass)
 
 
 async def _update_listener(
@@ -153,11 +118,6 @@ async def _update_listener(
     data = hass.data.get(DOMAIN, {})
     if data.get(_ACTIVE_ENTRY_LIFETIME) is not entry_token:
         return
-    conf = config_entry.options
-    for key in CONF_KEYS:
-        if key in hass.data[DOMAIN]:
-            del hass.data[DOMAIN][key]
-    hass.data[DOMAIN].update(conf)
     await apply_hooks(hass, dict(config_entry.data))
 
 
@@ -381,66 +341,14 @@ def remove_hooks(hass: HomeAssistant) -> bool:
         bool: Whether the original frontend was restored.
     """
     data = hass.data.get(DOMAIN)
-    if not data or "resolve" not in data or "manifest_icons" not in data:
+    if not data:
         return True
-    _invalidate_pending_apply(hass)
+    data[_APPLY_GENERATION] = data.get(_APPLY_GENERATION, 0) + 1
+    data.pop(_ACTIVE_ENTRY_LIFETIME, None)
+    if "resolve" not in data or "manifest_icons" not in data:
+        return True
     frontend.IndexView.resolve = data["resolve"]  # type: ignore[method-assign]
     frontend.add_manifest_json_key("icons", data["manifest_icons"].copy())
     for key, value in data["manifest_names"].items():
         frontend.add_manifest_json_key(key, value)
-    for key in CONF_KEYS:
-        data.pop(key, None)
     return True
-
-
-async def _restore_configured_hooks(hass: HomeAssistant) -> bool:
-    """Restore YAML customizations after a config entry stops overriding them.
-
-    Keep the entry metadata until YAML hook application succeeds. If that await
-    fails or is canceled, the entry listener remains active with its original settings.
-
-    Args:
-        hass (HomeAssistant): Home Assistant instance.
-
-    Returns:
-        bool: Whether the configured frontend state was restored.
-    """
-    data = hass.data.get(DOMAIN, {})
-    _invalidate_pending_apply(hass)
-    active_entry_lifetime = data.pop(_ACTIVE_ENTRY_LIFETIME, None)
-    yaml_config = data.get("yaml_config", {})
-    if yaml_config:
-        completed = False
-        try:
-            applied = await apply_hooks(hass, dict(yaml_config))
-            completed = True
-        finally:
-            # The entry hooks are still installed until YAML icon discovery
-            # finishes. Restore their listener lifetime on any unsuccessful exit.
-            if (
-                not completed
-                and active_entry_lifetime is not None
-                and _ACTIVE_ENTRY_LIFETIME not in data
-            ):
-                data[_ACTIVE_ENTRY_LIFETIME] = active_entry_lifetime
-        if _ACTIVE_ENTRY_LIFETIME in data:
-            return applied
-        for key in CONF_KEYS:
-            data.pop(key, None)
-        data.update(yaml_config)
-        return applied
-    for key in CONF_KEYS:
-        data.pop(key, None)
-    data.update(yaml_config)
-    return remove_hooks(hass)
-
-
-def _invalidate_pending_apply(hass: HomeAssistant) -> None:
-    """Invalidate icon scans that have not yet applied their frontend changes.
-
-    Args:
-        hass (HomeAssistant): Home Assistant instance.
-    """
-    data = hass.data.get(DOMAIN)
-    if data is not None:
-        data[_APPLY_GENERATION] = data.get(_APPLY_GENERATION, 0) + 1

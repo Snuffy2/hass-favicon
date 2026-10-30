@@ -40,6 +40,8 @@ Change the gui page title, favicon, app icons, and launch icon color of your Hom
 
 ## Add Integration
 
+Configuration is through the UI only. YAML configuration is not supported.
+
 [![Open your Home Assistant instance and install hass-favicon.](https://my.home-assistant.io/badges/brand.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=favicon)
 
 OR 

@@ -7,21 +7,18 @@ import logging
 from pathlib import Path
 import re
 import threading
-from typing import NoReturn
 from unittest.mock import patch
 
 from homeassistant.components import frontend
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers.data_entry_flow import FlowManagerIndexView
-from homeassistant.setup import async_setup_component
 from jinja2 import Template
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
 from custom_components.favicon import (
-    CONFIG_SCHEMA,
     apply_hooks,
     async_remove_entry,
     async_setup,
@@ -46,90 +43,12 @@ def _create_icon_files(directory: Path, filenames: tuple[str, ...]) -> None:
         (directory / filename).touch()
 
 
-@pytest.mark.parametrize("configured", [False, True])
-async def test_yaml_setup(hass: HomeAssistant, configured: bool) -> None:
-    """Apply supplied YAML settings and leave an unconfigured frontend alone.
-
-    Args:
-        hass (HomeAssistant): Home Assistant test instance.
-        configured (bool): Whether YAML settings are supplied.
-    """
-    settings = {CONF_ICON_PATH: "/local/favicons/", CONF_TITLE: "Test home"}
-    config = {DOMAIN: settings} if configured else {}
-    with patch("custom_components.favicon.apply_hooks", autospec=True, return_value=True) as apply:
-        assert await async_setup(hass, config) is True
-        if configured:
-            apply.assert_awaited_once_with(hass, settings)
-        else:
-            apply.assert_not_awaited()
-
-
-def test_yaml_schema_accepts_supported_configuration() -> None:
-    """Validate the supported YAML keys while permitting other HA sections."""
-    configuration = {
-        "default_config": {},
-        DOMAIN: {
-            CONF_TITLE: "YAML home",
-            CONF_ICON_PATH: "/local/favicons/",
-            CONF_ICON_COLOR: "#123456",
-        },
-    }
-
-    assert CONFIG_SCHEMA(configuration) == configuration
-
-
-@pytest.mark.parametrize(
-    "yaml_settings",
-    [
-        None,
-        {"legacy_key": True},
-        {CONF_ICON_COLOR: "#FFF"},
-        {CONF_ICON_COLOR: "red"},
-        {CONF_ICON_COLOR: None},
-        {CONF_ICON_COLOR: 'red" onload="alert(1)'},
-    ],
-)
-async def test_legacy_yaml_does_not_block_entry_setup(
-    favicon_frontend: HomeAssistant,
-    hass_client: ClientSessionGenerator,
-    monkeypatch: pytest.MonkeyPatch,
-    yaml_settings: dict[str, object] | None,
-) -> None:
-    """Keep legacy YAML compatible with loading UI config entries.
-
-    Args:
-        favicon_frontend (HomeAssistant): Real frontend with isolated icon files.
-        hass_client (ClientSessionGenerator): Authenticated HTTP client factory.
-        monkeypatch (pytest.MonkeyPatch): Fixture for replacing the template source.
-        yaml_settings (dict[str, object] | None): Previously accepted YAML settings.
-    """
-    hass = favicon_frontend
-    client = await hass_client()
-    monkeypatch.setattr(
-        frontend.IndexView,
-        "get_template",
-        lambda _view: Template(
-            '<title>Home Assistant</title><link rel="mask-icon" '
-            'href="/static/icons/mask-icon.svg" color="#18bcf2"><body></body>'
-        ),
-    )
-    config = CONFIG_SCHEMA({DOMAIN: yaml_settings})
-    assert await async_setup(hass, config) is True
-    if yaml_settings and isinstance(color := yaml_settings.get(CONF_ICON_COLOR), str):
-        rendered = await (await client.get("/")).text()
-        assert f'color="{html.escape(color)}"' in rendered
-    entry = MockConfigEntry(domain=DOMAIN, data={CONF_TITLE: "UI home"})
-    assert await async_setup_entry(hass, entry) is True
-    assert frontend.MANIFEST_JSON["name"] == "UI home"
-    remove_hooks(hass)
-
-
 async def test_custom_title_is_rendered_safely_and_unload_restores_frontend(
     favicon_frontend: HomeAssistant,
     hass_client: ClientSessionGenerator,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Escape custom title output and restore cached frontend state on unload.
+    """Escape custom title output and restore original frontend state on unload.
 
     Args:
         favicon_frontend (HomeAssistant): Real frontend with isolated icon files.
@@ -149,23 +68,25 @@ async def test_custom_title_is_rendered_safely_and_unload_restores_frontend(
             '<body><svg><path fill="#18bcf2"></path></svg></body></html>'
         ),
     )
-    original_get_template = frontend.IndexView.get_template
-    yaml_icon_directory = Path(hass.config.path("www/yaml-favicons"))
+    original_names = {key: frontend.MANIFEST_JSON[key] for key in ("name", "short_name")}
+    original_icons = frontend.MANIFEST_JSON["icons"].copy()
+    icon_directory = Path(hass.config.path("www/custom-favicons"))
     await hass.async_add_executor_job(
         _create_icon_files,
-        yaml_icon_directory,
+        icon_directory,
         ("favicon.ico", "favicon-apple-180x180.png", "favicon-192x192.png"),
     )
     title = 'Lab "quoted"\n</script><img src=x onerror=alert(1)>'
-    config = {
-        DOMAIN: {
-            CONF_TITLE: title,
-            CONF_ICON_PATH: "/local/yaml-favicons/",
-            CONF_ICON_COLOR: "#ff0000",
-        }
+    settings = {
+        CONF_TITLE: title,
+        CONF_ICON_PATH: "/local/custom-favicons/",
+        CONF_ICON_COLOR: "#ff0000",
     }
 
-    assert await async_setup(hass, config) is True
+    assert await async_setup(hass, {}) is True
+    entry = MockConfigEntry(domain=DOMAIN, data=settings)
+    entry.add_to_hass(hass)
+    assert await async_setup_entry(hass, entry) is True
     rendered = await (await client.get("/")).text()
 
     assert f"<title>{html.escape(title)}</title>" in rendered
@@ -177,41 +98,18 @@ async def test_custom_title_is_rendered_safely_and_unload_restores_frontend(
     assert 'querySelector(".title").innerHTML' not in rendered
     assert 'href="/static/icons/mask-icon.svg" color="#ff0000"' in rendered
     assert '<path fill="#ff0000">' in rendered
-    assert 'href="/local/yaml-favicons/favicon.ico"' in rendered
-    assert 'href="/local/yaml-favicons/favicon-apple-180x180.png"' in rendered
-
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={
-            CONF_TITLE: "Entry title",
-            CONF_ICON_PATH: "/local/entry-icons/",
-            CONF_ICON_COLOR: "#00ff00",
-        },
-    )
-    assert await async_setup_entry(hass, entry) is True
-    entry_rendered = await (await client.get("/")).text()
-    assert "<title>Entry title</title>" in entry_rendered
-    assert 'color="#00ff00"' in entry_rendered
+    assert 'href="/local/custom-favicons/favicon.ico"' in rendered
+    assert 'href="/local/custom-favicons/favicon-apple-180x180.png"' in rendered
 
     assert await async_unload_entry(hass, entry) is True
-    assert frontend.MANIFEST_JSON["icons"] == [
-        {
-            "src": "/local/yaml-favicons/favicon-192x192.png",
-            "sizes": "192x192",
-            "type": "image/png",
-        }
-    ]
-    assert frontend.MANIFEST_JSON["name"] == title
-    assert frontend.MANIFEST_JSON["short_name"] == title
-    yaml_rendered = await (await client.get("/")).text()
-    assert f"<title>{html.escape(title)}</title>" in yaml_rendered
-    assert 'color="#ff0000"' in yaml_rendered
-    assert 'href="/local/yaml-favicons/favicon.ico"' in yaml_rendered
+    assert frontend.MANIFEST_JSON["icons"] == original_icons
+    assert {key: frontend.MANIFEST_JSON[key] for key in original_names} == original_names
+    restored = await (await client.get("/")).text()
+    assert "<title>Home Assistant</title>" in restored
+    assert 'color="#18bcf2"' in restored
+    assert 'href="/static/icons/favicon.ico"' in restored
     assert await async_remove_entry(hass, entry) is True
-    assert frontend.MANIFEST_JSON["name"] == title
     assert await async_remove_entry(hass, entry) is True
-    remove_hooks(hass)
-    assert frontend.IndexView.get_template is original_get_template
 
 
 async def test_icon_urls_encode_reserved_filesystem_characters(
@@ -254,7 +152,9 @@ async def test_icon_urls_encode_reserved_filesystem_characters(
     assert icons["apple"] == apple_url
     assert icons["manifest"] == [{"src": manifest_url, "sizes": "192x192", "type": "image/png"}]
 
-    assert await async_setup(hass, {DOMAIN: {CONF_ICON_PATH: path_str}}) is True
+    assert await async_setup(hass, {}) is True
+    entry = MockConfigEntry(domain=DOMAIN, data={CONF_ICON_PATH: path_str})
+    assert await async_setup_entry(hass, entry) is True
     rendered = await (await client.get("/")).text()
     assert f'href="{favicon_url}"' in rendered
     assert f'href="{apple_url}"' in rendered
@@ -278,53 +178,8 @@ def test_malformed_icon_filename_does_not_block_valid_icons(
     assert any(record.levelno == logging.WARNING for record in caplog.records)
 
 
-async def test_removal_restores_defaults_when_yaml_application_fails(
-    favicon_frontend: HomeAssistant,
-    hass_client: ClientSessionGenerator,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Remove entry branding even when configured YAML cannot be reapplied.
-
-    Args:
-        favicon_frontend (HomeAssistant): Real frontend with isolated icon files.
-        hass_client (ClientSessionGenerator): Authenticated HTTP client factory.
-        monkeypatch (pytest.MonkeyPatch): Fixture for failing YAML icon discovery.
-    """
-    hass = favicon_frontend
-    original = {key: frontend.MANIFEST_JSON[key] for key in ("name", "short_name", "icons")}
-    yaml_settings = {CONF_TITLE: "YAML home", CONF_ICON_PATH: "/local/favicons/"}
-    assert await async_setup_component(hass, DOMAIN, {DOMAIN: yaml_settings})
-    entry = MockConfigEntry(
-        domain=DOMAIN, data={CONF_TITLE: "Entry home", CONF_ICON_PATH: "/local/empty/"}
-    )
-    entry.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    assert frontend.MANIFEST_JSON["name"] == "Entry home"
-
-    def failed_scan(_hass: HomeAssistant, _path: str) -> NoReturn:
-        """Simulate an icon-discovery failure during YAML restoration.
-
-        Args:
-            _hass (HomeAssistant): Home Assistant test instance.
-            _path (str): Configured icon directory.
-
-        Raises:
-            RuntimeError: Always, to exercise failed YAML restoration.
-        """
-        raise RuntimeError("YAML icon discovery failed")
-
-    monkeypatch.setattr("custom_components.favicon.find_icons", failed_scan)
-    await hass.config_entries.async_remove(entry.entry_id)
-    assert hass.config_entries.async_get_entry(entry.entry_id) is None
-    assert {key: frontend.MANIFEST_JSON[key] for key in original} == original
-    client = await hass_client()
-    response = await client.get("/")
-    assert response.status == 200
-    assert "<title>Home Assistant</title>" in await response.text()
-
-
-async def test_entry_unload_restores_defaults_without_yaml(hass: HomeAssistant) -> None:
-    """Restore the default frontend when an entry has no YAML configuration.
+async def test_entry_unload_restores_original_frontend(hass: HomeAssistant) -> None:
+    """Restore the original frontend when a config entry unloads.
 
     Args:
         hass (HomeAssistant): Home Assistant test instance.
@@ -370,27 +225,19 @@ async def test_entry_unload_unregisters_update_listener(hass: HomeAssistant) -> 
     assert entry.update_listeners == []
 
 
-@pytest.mark.parametrize("yaml_configured", [False, True])
 async def test_unload_discards_in_flight_entry_icon_scan(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
-    yaml_configured: bool,
 ) -> None:
     """Keep unload restoration after an entry scan that finishes late.
 
     Args:
         hass (HomeAssistant): Home Assistant test instance.
         monkeypatch (pytest.MonkeyPatch): Fixture for replacing icon discovery.
-        yaml_configured (bool): Whether unload should restore YAML customizations.
     """
     original_icons = frontend.MANIFEST_JSON["icons"].copy()
     original_names = {key: frontend.MANIFEST_JSON[key] for key in ("name", "short_name")}
-    yaml_config = (
-        {CONF_TITLE: "YAML title", CONF_ICON_PATH: "/local/missing-yaml-icons/"}
-        if yaml_configured
-        else {}
-    )
-    assert await async_setup(hass, {DOMAIN: yaml_config} if yaml_configured else {}) is True
+    assert await async_setup(hass, {}) is True
 
     scan_started = asyncio.Event()
     release_scan = threading.Event()
@@ -424,73 +271,7 @@ async def test_unload_discards_in_flight_entry_icon_scan(
     assert await asyncio.wait_for(setup_task, timeout=5) is True
 
     assert frontend.MANIFEST_JSON["icons"] == original_icons
-    if yaml_configured:
-        assert frontend.MANIFEST_JSON["name"] == "YAML title"
-        assert frontend.MANIFEST_JSON["short_name"] == "YAML title"
-    else:
-        assert {key: frontend.MANIFEST_JSON[key] for key in original_names} == original_names
-
-
-@pytest.mark.parametrize("failure", ["cancelled", "scan_error"])
-async def test_failed_yaml_restore_keeps_entry_listener_active(
-    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, failure: str
-) -> None:
-    """Keep entry hooks and their listener when YAML restoration cannot complete.
-
-    Args:
-        hass (HomeAssistant): Home Assistant test instance.
-        monkeypatch (pytest.MonkeyPatch): Fixture for delaying YAML icon discovery.
-        failure (str): Whether icon discovery is canceled or raises an encoding error.
-    """
-    yaml_config = {CONF_TITLE: "YAML title", CONF_ICON_PATH: "/local/yaml-cancel-icons/"}
-    assert await async_setup(hass, {DOMAIN: yaml_config}) is True
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={CONF_TITLE: "Entry title"},
-        options={CONF_TITLE: "Entry title"},
-    )
-    entry.add_to_hass(hass)
-    assert await async_setup_entry(hass, entry) is True
-
-    scan_started = asyncio.Event()
-    scan_finished = asyncio.Event()
-    release_scan = threading.Event()
-
-    def delayed_yaml_scan(scan_hass: HomeAssistant, path_str: str) -> dict[str, object]:
-        if path_str == "/local/yaml-cancel-icons/":
-            scan_hass.loop.call_soon_threadsafe(scan_started.set)
-            if not release_scan.wait(timeout=5):
-                raise TimeoutError("The test did not release the YAML icon scan")
-            scan_hass.loop.call_soon_threadsafe(scan_finished.set)
-            if failure == "scan_error":
-                raise UnicodeEncodeError("utf-8", "\udcff", 0, 1, "invalid icon filename")
-        return {}
-
-    monkeypatch.setattr("custom_components.favicon.find_icons", delayed_yaml_scan)
-    unload_task = hass.async_create_task(async_unload_entry(hass, entry))
-    try:
-        await asyncio.wait_for(scan_started.wait(), timeout=5)
-        if failure == "cancelled":
-            unload_task.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await unload_task
-        else:
-            release_scan.set()
-            with pytest.raises(UnicodeEncodeError):
-                await unload_task
-    finally:
-        release_scan.set()
-    await asyncio.wait_for(scan_finished.wait(), timeout=5)
-
-    assert frontend.MANIFEST_JSON["name"] == "Entry title"
-    assert hass.config_entries.async_update_entry(
-        entry,
-        data={CONF_TITLE: "Updated entry title"},
-        options={CONF_TITLE: "Updated entry title"},
-    )
-    await hass.async_block_till_done()
-    assert frontend.MANIFEST_JSON["name"] == "Updated entry title"
-    remove_hooks(hass)
+    assert {key: frontend.MANIFEST_JSON[key] for key in original_names} == original_names
 
 
 async def test_latest_overlapping_apply_wins(
@@ -556,12 +337,12 @@ async def test_latest_overlapping_apply_wins(
     remove_hooks(hass)
 
 
-@pytest.mark.parametrize("restore_yaml", [False, True])
+@pytest.mark.parametrize("transition", ["update", "unload", "remove"])
 async def test_in_flight_template_load_cannot_refill_active_cache(
     favicon_frontend: HomeAssistant,
     hass_client: ClientSessionGenerator,
     monkeypatch: pytest.MonkeyPatch,
-    restore_yaml: bool,
+    transition: str,
 ) -> None:
     """Keep old template loads out of the live cache after settings change.
 
@@ -569,7 +350,7 @@ async def test_in_flight_template_load_cannot_refill_active_cache(
         favicon_frontend (HomeAssistant): Real frontend with isolated icon files.
         hass_client (ClientSessionGenerator): Authenticated HTTP client factory.
         monkeypatch (pytest.MonkeyPatch): Fixture for replacing the template getter.
-        restore_yaml (bool): Whether unloading should restore YAML settings.
+        transition (str): Entry transition while the original page is loading.
     """
     hass = favicon_frontend
     client = await hass_client()
@@ -595,14 +376,10 @@ async def test_in_flight_template_load_cannot_refill_active_cache(
         return template
 
     monkeypatch.setattr(frontend.IndexView, "get_template", delayed_template)
-    yaml_config = {CONF_TITLE: "YAML title"} if restore_yaml else {}
-    assert await async_setup(hass, {DOMAIN: yaml_config} if restore_yaml else {}) is True
-    entry_title = "Entry title" if restore_yaml else "Old title"
-    if restore_yaml:
-        entry = MockConfigEntry(domain=DOMAIN, data={CONF_TITLE: entry_title})
-        assert await async_setup_entry(hass, entry) is True
-    else:
-        assert await apply_hooks(hass, {CONF_TITLE: entry_title}) is True
+    assert await async_setup(hass, {}) is True
+    entry_title = "Entry title"
+    entry = MockConfigEntry(domain=DOMAIN, data={CONF_TITLE: entry_title})
+    assert await async_setup_entry(hass, entry) is True
 
     index_view = next(
         view for view in hass.http.app.router.resources() if isinstance(view, frontend.IndexView)
@@ -619,12 +396,13 @@ async def test_in_flight_template_load_cannot_refill_active_cache(
     old_request = hass.async_create_task(load_template())
     try:
         await asyncio.wait_for(load_started.wait(), timeout=5)
-        if restore_yaml:
-            assert await async_unload_entry(hass, entry) is True
-            expected_title = "YAML title"
-        else:
+        if transition == "update":
             assert await apply_hooks(hass, {CONF_TITLE: "New title"}) is True
             expected_title = "New title"
+        else:
+            callback = async_unload_entry if transition == "unload" else async_remove_entry
+            assert await callback(hass, entry) is True
+            expected_title = "Home Assistant"
     finally:
         release_load.set()
 
