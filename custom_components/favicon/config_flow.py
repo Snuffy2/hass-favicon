@@ -129,7 +129,8 @@ async def validate_input(user_input: MutableMapping[str, Any], errors: dict[str,
         errors (dict[str, Any]): Validation errors updated in place.
     """
     await _convert_color_to_hex(user_input)
-    if not user_input.get(CONF_ICON_PATH, "").startswith("/local/"):
+    icon_path: str = user_input.get(CONF_ICON_PATH, "")
+    if not icon_path.startswith("/local/") or ".." in icon_path.split("/"):
         errors["base"] = "bad_path"
         return
 
@@ -216,6 +217,8 @@ class FaviconOptionsFlowHandler(OptionsFlow):
         return self.async_show_form(
             step_id="init",
             # Home Assistant aliases Voluptuous at runtime; older annotations need no ignore.
-            data_schema=_get_schema(user_input=dict(self.config_entry.data)),  # type: ignore[arg-type, unused-ignore]
+            data_schema=_get_schema(
+                user_input=user_input, default_dict=dict(self.config_entry.data)
+            ),  # type: ignore[arg-type, unused-ignore]
             errors=errors,
         )

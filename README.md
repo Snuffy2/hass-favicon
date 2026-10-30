@@ -9,7 +9,7 @@
 [![License][license-shield]](LICENSE)
 [![hacs][hacsbadge]][hacs]
 
-Customize the page title, favicon, app icons, and launch icon color of your Home Assistant instance.
+Customize the page title, favicon, app icons, and Safari pinned-tab icon color of your Home Assistant instance.
 
 ![Example browser title and icon](https://user-images.githubusercontent.com/1299821/62975860-ad283a80-be1b-11e9-836a-d58a1732fb21.png)
 
@@ -32,8 +32,8 @@ Configuration is through the Home Assistant UI. Add **Favicon** from Settings > 
 Enter the following settings and submit the form:
 
 - **Page title**: The title used in the browser and Home Assistant sidebar. The default is `Home Assistant`.
-- **Icon path**: The frontend directory containing the icons, such as `/local/favicons/`. It must begin with `/local/` and should point to the directory, not an individual file.
-- **Launch icon color**: The color for the launch logo and Safari pinned-tab icon. The default is `#18BCF2`.
+- **Icon path**: The frontend directory containing the icons, such as `/local/favicons/`. It must begin with `/local/`, must not contain `..`, and should point to the directory, not an individual file.
+- **Launch icon color**: The color of the Safari pinned-tab icon. The default is `#18BCF2`.
 
 Only one Favicon configuration is allowed. To change these settings later, open the integration's options. Refresh the page after saving; clear your browser cache if old icons remain.
 

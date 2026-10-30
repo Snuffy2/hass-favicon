@@ -504,6 +504,23 @@ async def test_development_frontend_serves_fresh_templates(
     remove_hooks(entry)
 
 
+@pytest.mark.parametrize("path", ["/local/../..", "/local/a/../../x/"])
+def test_find_icons_rejects_parent_segments(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture, path: str
+) -> None:
+    """Refuse to scan outside the www directory via parent path segments.
+
+    Args:
+        hass (HomeAssistant): Home Assistant test instance.
+        caplog (pytest.LogCaptureFixture): Captured error logs.
+        path (str): Icon path containing a parent segment.
+    """
+    with caplog.at_level(logging.ERROR, logger="custom_components.favicon"):
+        assert find_icons(hass, path) == {}
+
+    assert f"Invalid Path: {path}" in caplog.text
+
+
 @pytest.mark.parametrize(
     "path", ["/local/missing-directory-for-warning-test/", "/local/invalid\x00/"]
 )

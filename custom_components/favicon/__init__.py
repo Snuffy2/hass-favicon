@@ -117,7 +117,7 @@ def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping[str, Any]:
     """
     icons: dict[str, Any] = {}
     manifest: list[dict[str, Any]] = []
-    if not path_str or not path_str.startswith("/local/"):
+    if not path_str or not path_str.startswith("/local/") or ".." in path_str.split("/"):
         _LOGGER.error("Invalid Path: %s", path_str)
         return icons
     path: Path = Path(path_str)

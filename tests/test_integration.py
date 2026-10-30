@@ -69,7 +69,10 @@ async def test_config_entry_options_and_removal(favicon_frontend: HomeAssistant)
     assert frontend.MANIFEST_JSON["icons"] == original_icons
 
 
-@pytest.mark.parametrize("path", ["/config/www/favicons", "https://example.com/icons", ""])
+@pytest.mark.parametrize(
+    "path",
+    ["/config/www/favicons", "https://example.com/icons", "", "/local/../..", "/local/a/../../x/"],
+)
 async def test_invalid_path_can_be_corrected(favicon_frontend: HomeAssistant, path: str) -> None:
     """Keep failed input in the form and allow a corrected submission.
 
@@ -89,6 +92,37 @@ async def test_invalid_path_can_be_corrected(favicon_frontend: HomeAssistant, pa
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     assert result["result"].state is ConfigEntryState.LOADED
+
+
+async def test_options_error_keeps_submitted_values(favicon_frontend: HomeAssistant) -> None:
+    """Show the submitted values, not stored ones, after an options validation error.
+
+    Args:
+        favicon_frontend (HomeAssistant): Real frontend with local icon files.
+    """
+    hass = favicon_frontend
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_TITLE: "Stored", CONF_ICON_PATH: "/local/favicons/", CONF_ICON_COLOR: "#123456"},
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    options = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        options["flow_id"],
+        {CONF_TITLE: "Typed", CONF_ICON_PATH: "/local/../..", CONF_ICON_COLOR: [255, 0, 0]},
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "bad_path"}
+    schema = result["data_schema"]
+    assert schema is not None
+    assert schema({}) == {
+        CONF_TITLE: "Typed",
+        CONF_ICON_PATH: "/local/../..",
+        CONF_ICON_COLOR: [255, 0, 0],
+    }
+    assert entry.data[CONF_TITLE] == "Stored"
 
 
 async def test_single_instance(favicon_frontend: HomeAssistant) -> None:
