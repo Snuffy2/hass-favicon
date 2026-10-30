@@ -29,12 +29,16 @@ RE_ICON = r"^favicon-(\d+x\d+)\..+"
 
 CONFIG_SCHEMA: vol.Schema = vol.Schema(
     {
-        vol.Optional(DOMAIN): vol.Schema(
-            {
-                vol.Optional(CONF_TITLE): cv.string,
-                vol.Optional(CONF_ICON_PATH): cv.string,
-                vol.Optional(CONF_ICON_COLOR): vol.All(cv.string, vol.Match(r"^#[0-9a-fA-F]{6}$")),
-            }
+        vol.Optional(DOMAIN): vol.Any(
+            None,
+            vol.Schema(
+                {
+                    vol.Optional(CONF_TITLE): cv.string,
+                    vol.Optional(CONF_ICON_PATH): cv.string,
+                    vol.Optional(CONF_ICON_COLOR): vol.Any(None, cv.string),
+                },
+                extra=vol.ALLOW_EXTRA,
+            ),
         )
     },
     extra=vol.ALLOW_EXTRA,
@@ -265,6 +269,7 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
             )
 
         if launch_icon_color:
+            escaped_color = escape(launch_icon_color)
             # Regex to match hex color codes (e.g., #18bcf2, #123ABC)
             hex_color_pattern = r"#(?:[0-9a-fA-F]{6})"
 
@@ -272,12 +277,12 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
                 r'(<link rel="mask-icon" href="/static/icons/mask-icon\.svg" color=")'
                 + hex_color_pattern
                 + r'(">)',
-                rf"\1{launch_icon_color}\2",
+                lambda match: f"{match[1]}{escaped_color}{match[2]}",
                 text,
             )
             text = re.sub(
                 rf'(<path fill="){hex_color_pattern}(")',
-                rf"\1{launch_icon_color}\2",
+                lambda match: f"{match[1]}{escaped_color}{match[2]}",
                 text,
                 count=1,  # Only replace the first occurrence
             )

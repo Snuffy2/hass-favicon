@@ -71,6 +71,48 @@ def test_yaml_schema_accepts_sample_configuration() -> None:
     assert CONFIG_SCHEMA(configuration) == configuration
 
 
+@pytest.mark.parametrize(
+    "yaml_settings",
+    [
+        None,
+        {"legacy_key": True},
+        {CONF_ICON_COLOR: "#FFF"},
+        {CONF_ICON_COLOR: "red"},
+        {CONF_ICON_COLOR: None},
+        {CONF_ICON_COLOR: 'red" onload="alert(1)'},
+    ],
+)
+async def test_legacy_yaml_does_not_block_entry_setup(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    yaml_settings: dict[str, object] | None,
+) -> None:
+    """Keep legacy YAML compatible with loading UI config entries.
+
+    Args:
+        hass (HomeAssistant): Home Assistant test instance.
+        monkeypatch (pytest.MonkeyPatch): Fixture for replacing the template source.
+        yaml_settings (dict[str, object] | None): Previously accepted YAML settings.
+    """
+    monkeypatch.setattr(
+        frontend.IndexView,
+        "get_template",
+        lambda _view: Template(
+            '<title>Home Assistant</title><link rel="mask-icon" '
+            'href="/static/icons/mask-icon.svg" color="#18bcf2"><body></body>'
+        ),
+    )
+    config = CONFIG_SCHEMA({DOMAIN: yaml_settings})
+    assert await async_setup(hass, config) is True
+    if yaml_settings and isinstance(color := yaml_settings.get(CONF_ICON_COLOR), str):
+        rendered = frontend.IndexView(None, hass).get_template().render()
+        assert f'color="{html.escape(color)}"' in rendered
+    entry = MockConfigEntry(domain=DOMAIN, data={CONF_TITLE: "UI home"})
+    assert await async_setup_entry(hass, entry) is True
+    assert frontend.MANIFEST_JSON["name"] == "UI home"
+    remove_hooks(hass)
+
+
 async def test_custom_title_is_rendered_safely_and_unload_restores_frontend(
     hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
 ) -> None:
