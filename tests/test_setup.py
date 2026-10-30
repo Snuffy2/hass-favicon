@@ -9,6 +9,9 @@ import re
 import threading
 from unittest.mock import patch
 
+from aiohttp import web
+from aiohttp.test_utils import make_mocked_request
+from aiohttp.web_urldispatcher import SystemRoute, UrlMappingMatchInfo
 from homeassistant.components import frontend
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -223,6 +226,52 @@ async def test_remove_entry_without_runtime_data_is_safe(hass: HomeAssistant) ->
     assert {
         key: frontend.MANIFEST_JSON[key] for key in original_manifest_names
     } == original_manifest_names
+
+
+async def test_resolver_preserves_resource_less_route_result(
+    favicon_frontend: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Preserve aiohttp system routes and allowed methods through the installed resolver.
+
+    Args:
+        favicon_frontend (HomeAssistant): Home Assistant instance with a real frontend.
+        monkeypatch (pytest.MonkeyPatch): Fixture for controlling the original resolver.
+    """
+    hass = favicon_frontend
+    route = SystemRoute(web.HTTPNotFound())
+    match_info = UrlMappingMatchInfo({}, route)
+    allowed_methods = {"GET", "HEAD"}
+
+    async def resolve(
+        _view: frontend.IndexView, _request: web.Request
+    ) -> tuple[UrlMappingMatchInfo, set[str]]:
+        """Return a realistic route result without needing an HTTP server request.
+
+        Args:
+            _view (frontend.IndexView): Frontend resource resolving the request.
+            _request (web.Request): Request being resolved.
+
+        Returns:
+            tuple[UrlMappingMatchInfo, set[str]]: System route and allowed methods.
+        """
+        return match_info, allowed_methods
+
+    monkeypatch.setattr(frontend.IndexView, "resolve", resolve)
+    entry = MockConfigEntry(domain=DOMAIN)
+    entry.add_to_hass(hass)
+    assert await async_setup_entry(hass, entry) is True
+    assert frontend.IndexView.resolve is not resolve
+
+    index_view = next(
+        view for view in hass.http.app.router.resources() if isinstance(view, frontend.IndexView)
+    )
+    result, result_allowed_methods = await index_view.resolve(make_mocked_request("GET", "/"))
+
+    assert route.resource is None
+    assert result is match_info
+    assert result_allowed_methods is allowed_methods
+    assert await async_remove_entry(hass, entry) is True
 
 
 @pytest.mark.parametrize("reload_entry", [False, True])
