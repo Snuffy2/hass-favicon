@@ -2,7 +2,7 @@
   "title": "Favicon",
   "config": {
     "error": {
-      "bad_path": "Icon path must start with /local/"
+      "bad_path": "Icon path must start with /local/ and must not contain a .. parent-directory segment"
     },
     "step": {
       "user": {
@@ -21,7 +21,7 @@
   },
   "options": {
     "error": {
-      "bad_path": "Icon path must start with /local/"
+      "bad_path": "Icon path must start with /local/ and must not contain a .. parent-directory segment"
     },
     "step": {
       "init": {

@@ -62,21 +62,19 @@ def hex_to_rgb_list(hex_str: str) -> list[int]:
 
 def _get_schema(
     user_input: MutableMapping[str, Any] | None,
-    default_dict: MutableMapping[str, Any] | None = None,
+    default_dict: MutableMapping[str, Any],
 ) -> vol.Schema:
     """Build the form schema using fallback defaults.
 
     Args:
         user_input (MutableMapping[str, Any] | None): Submitted values.
-        default_dict (MutableMapping[str, Any] | None): Fallback values.
+        default_dict (MutableMapping[str, Any]): Fallback values.
 
     Returns:
         vol.Schema: Schema for the favicon settings form.
     """
     if user_input is None:
         user_input = {}
-    if default_dict is None:
-        default_dict = {}
 
     def _get_default(key: str, fallback_default: Any | None = None) -> Any | None:
         """Get the default value for a key.
@@ -129,7 +127,8 @@ async def validate_input(user_input: MutableMapping[str, Any], errors: dict[str,
         errors (dict[str, Any]): Validation errors updated in place.
     """
     await _convert_color_to_hex(user_input)
-    if not user_input.get(CONF_ICON_PATH, "").startswith("/local/"):
+    icon_path: str = user_input.get(CONF_ICON_PATH, "")
+    if not icon_path.startswith("/local/") or ".." in icon_path.split("/"):
         errors["base"] = "bad_path"
         return
 
@@ -216,6 +215,8 @@ class FaviconOptionsFlowHandler(OptionsFlow):
         return self.async_show_form(
             step_id="init",
             # Home Assistant aliases Voluptuous at runtime; older annotations need no ignore.
-            data_schema=_get_schema(user_input=dict(self.config_entry.data)),  # type: ignore[arg-type, unused-ignore]
+            data_schema=_get_schema(
+                user_input=user_input, default_dict=dict(self.config_entry.data)
+            ),  # type: ignore[arg-type, unused-ignore]
             errors=errors,
         )

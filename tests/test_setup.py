@@ -5,6 +5,7 @@ import html
 import logging
 from pathlib import Path
 import threading
+from types import SimpleNamespace
 
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
@@ -24,7 +25,13 @@ from custom_components.favicon import (
     find_icons,
     remove_hooks,
 )
-from custom_components.favicon.const import CONF_ICON_COLOR, CONF_ICON_PATH, CONF_TITLE, DOMAIN
+from custom_components.favicon.const import (
+    CONF_ICON_COLOR,
+    CONF_ICON_PATH,
+    CONF_TITLE,
+    DOMAIN,
+    LAUNCH_LOGO_URL,
+)
 
 
 def _create_icon_files(directory: Path, filenames: tuple[str, ...]) -> None:
@@ -176,6 +183,64 @@ def test_malformed_icon_filename_does_not_block_valid_icons(
         record.name == "custom_components.favicon" and record.levelno == logging.WARNING
         for record in caplog.records
     )
+
+
+@pytest.mark.parametrize(
+    ("filenames", "apple"),
+    [
+        (
+            ("favicon-apple-touch.png", "favicon-apple-180x180.png", "favicon-apple-120x120.png"),
+            "favicon-apple-180x180.png",
+        ),
+        (("favicon-apple-touch.png", "favicon-apple-120x120.png"), "favicon-apple-120x120.png"),
+    ],
+    ids=["preferred-size", "alphabetical"],
+)
+def test_apple_icon_choice_is_deterministic(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    filenames: tuple[str, ...],
+    apple: str,
+) -> None:
+    """Choose the same Apple icon regardless of directory listing order.
+
+    Args:
+        hass (HomeAssistant): Home Assistant test instance.
+        monkeypatch (pytest.MonkeyPatch): Fixture for simulating directory entries.
+        filenames (tuple[str, ...]): Apple icon filenames in listing order.
+        apple (str): Filename expected to be chosen.
+    """
+    for listing in (filenames, tuple(reversed(filenames))):
+        monkeypatch.setattr(Path, "iterdir", lambda _path, names=listing: iter(map(Path, names)))
+        assert find_icons(hass, "/local/favicons/") == {"apple": f"/local/favicons/{apple}"}
+
+
+def test_manifest_icon_types_follow_file_extensions(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """List manifest icons with their real image type and skip non-image files.
+
+    Args:
+        hass (HomeAssistant): Home Assistant test instance.
+        monkeypatch (pytest.MonkeyPatch): Fixture for simulating directory entries.
+    """
+    filenames = [
+        "favicon-512x512.webp",
+        "favicon-192x192.png",
+        "favicon-192x192.png.bak",
+        "favicon-apple-180x180.txt",
+    ]
+    monkeypatch.setattr(Path, "iterdir", lambda _path: iter(map(Path, filenames)))
+    assert find_icons(hass, "/local/favicons/") == {
+        "manifest": [
+            {"src": "/local/favicons/favicon-192x192.png", "sizes": "192x192", "type": "image/png"},
+            {
+                "src": "/local/favicons/favicon-512x512.webp",
+                "sizes": "512x512",
+                "type": "image/webp",
+            },
+        ]
+    }
 
 
 async def test_remove_entry_without_runtime_data_is_safe(hass: HomeAssistant) -> None:
@@ -502,6 +567,61 @@ async def test_development_frontend_serves_fresh_templates(
     assert first_page == "<title>Template 1</title>"
     assert second_page == "<title>Template 2</title>"
     remove_hooks(entry)
+
+
+@pytest.mark.parametrize("logo", [None, "<svg></svg>"], ids=["missing", "without-fill"])
+async def test_unusable_launch_logo_keeps_frontend_logo(
+    favicon_frontend: HomeAssistant,
+    hass_client: ClientSessionGenerator,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    logo: str | None,
+) -> None:
+    """Serve the original launch logo when the bundled SVG cannot be recolored.
+
+    Args:
+        favicon_frontend (HomeAssistant): Real frontend with isolated icon files.
+        hass_client (ClientSessionGenerator): Authenticated HTTP client factory.
+        monkeypatch (pytest.MonkeyPatch): Fixture for replacing the frontend location.
+        tmp_path (Path): Directory standing in for the frontend package.
+        logo (str | None): Launch logo contents, or None for a missing file.
+    """
+    if logo is not None:
+        logo_path = tmp_path / LAUNCH_LOGO_URL.lstrip("/")
+        logo_path.parent.mkdir(parents=True)
+        logo_path.write_text(logo, encoding="utf-8")
+    monkeypatch.setattr(
+        "custom_components.favicon.hass_frontend", SimpleNamespace(where=lambda: tmp_path)
+    )
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_TITLE: "Lab", CONF_ICON_PATH: "/local/empty/", CONF_ICON_COLOR: "#123456"},
+    )
+    entry.add_to_hass(favicon_frontend)
+    assert await async_setup_entry(favicon_frontend, entry) is True
+
+    rendered = await (await (await hass_client()).get("/")).text()
+
+    assert f'src="{LAUNCH_LOGO_URL}"' in rendered
+    assert 'color="#123456"' in rendered
+    assert await async_unload_entry(favicon_frontend, entry) is True
+
+
+@pytest.mark.parametrize("path", ["/local/../..", "/local/a/../../x/"])
+def test_find_icons_rejects_parent_segments(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture, path: str
+) -> None:
+    """Refuse to scan outside the www directory via parent path segments.
+
+    Args:
+        hass (HomeAssistant): Home Assistant test instance.
+        caplog (pytest.LogCaptureFixture): Captured error logs.
+        path (str): Icon path containing a parent segment.
+    """
+    with caplog.at_level(logging.ERROR, logger="custom_components.favicon"):
+        assert find_icons(hass, path) == {}
+
+    assert f"Invalid Path: {path}" in caplog.text
 
 
 @pytest.mark.parametrize(

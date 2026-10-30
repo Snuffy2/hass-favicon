@@ -1,10 +1,12 @@
 """Initialize hass-favicon."""
 
+import base64
 from collections.abc import Awaitable, Callable, MutableMapping
 from dataclasses import dataclass
 from html import escape
 import json
 import logging
+import mimetypes
 from pathlib import Path
 import re
 from typing import Any
@@ -12,12 +14,13 @@ from urllib.parse import quote
 
 from aiohttp import web
 from aiohttp.web_urldispatcher import ResourceRoute, UrlMappingMatchInfo
+import hass_frontend
 from homeassistant.components import frontend
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 
-from .const import CONF_ICON_COLOR, CONF_ICON_PATH, CONF_TITLE, DOMAIN
+from .const import CONF_ICON_COLOR, CONF_ICON_PATH, CONF_TITLE, DOMAIN, LAUNCH_LOGO_URL
 
 _LOGGER: logging.Logger = logging.getLogger(__name__)
 
@@ -40,7 +43,10 @@ type FaviconConfigEntry = ConfigEntry[FaviconRuntimeData]
 
 
 RE_APPLE = r"^favicon-apple-"
+PREFERRED_APPLE_ICON = "favicon-apple-180x180.png"
 RE_ICON = r"^favicon-(\d+x\d+)\..+"
+# Regex to match hex color codes (e.g., #18bcf2, #123ABC)
+RE_HEX_COLOR = r"#(?:[0-9a-fA-F]{6})"
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -117,7 +123,7 @@ def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping[str, Any]:
     """
     icons: dict[str, Any] = {}
     manifest: list[dict[str, Any]] = []
-    if not path_str or not path_str.startswith("/local/"):
+    if not path_str or not path_str.startswith("/local/") or ".." in path_str.split("/"):
         _LOGGER.error("Invalid Path: %s", path_str)
         return icons
     path: Path = Path(path_str)
@@ -126,10 +132,15 @@ def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping[str, Any]:
     _LOGGER.info("Looking for icons in: %s", localpath)
 
     try:
-        for fn in localpath.iterdir():
+        # Sort so the chosen icons and manifest order do not depend on directory order.
+        for fn in sorted(localpath.iterdir()):
             apple = re.search(RE_APPLE, fn.name)
             icon = re.search(RE_ICON, fn.name)
             if fn.name != "favicon.ico" and not apple and not icon:
+                continue
+            icon_type, _ = mimetypes.guess_type(fn.name)
+            if (apple or icon) and (icon_type is None or not icon_type.startswith("image/")):
+                _LOGGER.info("Skipping icon that is not an image file: %s", path / fn.name)
                 continue
             try:
                 icon_url = quote(str(path / fn.name), safe="/")
@@ -140,7 +151,7 @@ def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping[str, Any]:
                 icons["favicon"] = icon_url
                 _LOGGER.info("Found favicon: %s", icons["favicon"])
 
-            if apple:
+            if apple and ("apple" not in icons or fn.name == PREFERRED_APPLE_ICON):
                 icons["apple"] = icon_url
                 _LOGGER.info("Found apple icon: %s", icons["apple"])
 
@@ -149,7 +160,7 @@ def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping[str, Any]:
                     {
                         "src": icon_url,
                         "sizes": icon.group(1),
-                        "type": "image/png",
+                        "type": icon_type,
                     }
                 )
                 _LOGGER.info("Found icon: %s", path / fn.name)
@@ -165,6 +176,36 @@ def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping[str, Any]:
         icons["manifest"] = manifest
     _LOGGER.debug("[find_icons] icons: %s", icons)
     return icons
+
+
+def build_launch_logo(color: str) -> str | None:
+    """Build the frontend launch-screen logo recolored as a data URI.
+
+    Current frontends load the launch logo as an image, so the color is applied to a
+    copy of the bundled SVG and served inline to work in every browser.
+
+    Args:
+        color (str): Color for the logo's first filled path.
+
+    Returns:
+        str | None: Recolored logo data URI, or None when it cannot be built.
+    """
+    logo_path = hass_frontend.where() / LAUNCH_LOGO_URL.lstrip("/")
+    try:
+        svg = logo_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as err:
+        _LOGGER.debug("Unable to read launch logo %s: %s", logo_path, err)
+        return None
+    svg, replaced = re.subn(
+        rf'(<path fill="){RE_HEX_COLOR}(")',
+        lambda match: f"{match[1]}{escape(color)}{match[2]}",
+        svg,
+        count=1,
+    )
+    if not replaced:
+        _LOGGER.debug("Launch logo has no fill color to replace: %s", logo_path)
+        return None
+    return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode("ascii")
 
 
 async def apply_hooks(
@@ -183,14 +224,19 @@ async def apply_hooks(
     data = entry.runtime_data
     data.generation += 1
     generation = data.generation
+    launch_icon_color = config_data.get(CONF_ICON_COLOR, None)
     icons = await hass.loop.run_in_executor(
         None, find_icons, hass, config_data.get(CONF_ICON_PATH, None)
+    )
+    launch_logo = (
+        await hass.async_add_executor_job(build_launch_logo, launch_icon_color)
+        if launch_icon_color
+        else None
     )
     if not data.active or data.generation != generation:
         return True
     _LOGGER.debug("[apply_hooks] icons: %s", icons)
     title = config_data.get(CONF_TITLE, None)
-    launch_icon_color = config_data.get(CONF_ICON_COLOR, None)
 
     def customize_html(text: str) -> str:
         """Apply the configured branding to rendered HTML.
@@ -238,18 +284,18 @@ async def apply_hooks(
 
         if launch_icon_color:
             escaped_color = escape(launch_icon_color)
-            # Regex to match hex color codes (e.g., #18bcf2, #123ABC)
-            hex_color_pattern = r"#(?:[0-9a-fA-F]{6})"
-
             text = re.sub(
                 r'(<link rel="mask-icon" href="/static/icons/mask-icon\.svg" color=")'
-                + hex_color_pattern
+                + RE_HEX_COLOR
                 + r'(">)',
                 lambda match: f"{match[1]}{escaped_color}{match[2]}",
                 text,
             )
+            if launch_logo:
+                text = text.replace(f'src="{LAUNCH_LOGO_URL}"', f'src="{launch_logo}"')
+            # Older frontends inline the launch logo SVG in the page.
             text = re.sub(
-                rf'(<path fill="){hex_color_pattern}(")',
+                rf'(<path fill="){RE_HEX_COLOR}(")',
                 lambda match: f"{match[1]}{escaped_color}{match[2]}",
                 text,
                 count=1,  # Only replace the first occurrence

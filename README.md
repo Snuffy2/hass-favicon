@@ -32,8 +32,8 @@ Configuration is through the Home Assistant UI. Add **Favicon** from Settings > 
 Enter the following settings and submit the form:
 
 - **Page title**: The title used in the browser and Home Assistant sidebar. The default is `Home Assistant`.
-- **Icon path**: The frontend directory containing the icons, such as `/local/favicons/`. It must begin with `/local/` and should point to the directory, not an individual file.
-- **Launch icon color**: The color for the launch logo and Safari pinned-tab icon. The default is `#18BCF2`.
+- **Icon path**: The frontend directory containing the icons, such as `/local/favicons/`. It must begin with `/local/`, must not contain a `..` parent-directory segment, and should point to the directory, not an individual file.
+- **Launch icon color**: The color of the Home Assistant logo shown while the frontend loads, and of the Safari pinned-tab icon. The default is `#18BCF2`.
 
 Only one Favicon configuration is allowed. To change these settings later, open the integration's options. Refresh the page after saving; clear your browser cache if old icons remain.
 
@@ -44,8 +44,10 @@ Only one Favicon configuration is allowed. To change these settings later, open 
 The integration scans the configured directory for these filenames:
 
 - `favicon.ico`: Browser tab and bookmark icon.
-- `favicon-apple-<anything>.png`: Apple touch icon for a saved home-screen shortcut.
-- `favicon-<width>x<height>.png`: App manifest icon, for example `favicon-192x192.png`.
+- `favicon-apple-<anything>.png`: Apple touch icon for a saved home-screen shortcut. If there are several, `favicon-apple-180x180.png` is used, otherwise the first in alphabetical order.
+- `favicon-<width>x<height>.png`: App manifest icon, for example `favicon-192x192.png`. Other image formats such as `.webp` also work; the manifest lists each icon with the type matching its extension.
+
+Files are recognized by their extension, not their contents. Matching files whose extension is not an image type, such as `favicon-192x192.png.bak`, are ignored.
 
 ![Example icons](https://user-images.githubusercontent.com/1299821/62975899-c29d6480-be1b-11e9-9b6b-9d160ef8b439.jpg)
 
