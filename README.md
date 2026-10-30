@@ -18,6 +18,8 @@ Change the gui page title, favicon, app icons, and launch icon color of your Hom
 
 *  Get some icons
 
+    *  Ready-to-use icon sets are included in [`icons/`](icons/): `dev`, `green`, `orange`, and `red`. Copy the files from one set into `<your config dir>/www/favicons/`, then set the integration's Icon path to `/local/favicons/`.
+
     *  There are some nice ones available [here](https://github.com/home-assistant/iOS/tree/master/icons/Alternates)
   
     *  You can generate favicons from them using an online tool, such as [this one](https://realfavicongenerator.net/).
