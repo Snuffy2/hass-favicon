@@ -75,3 +75,7 @@ OR
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, tests and pull request guidance.
+
+## Attribution
+
+This project continues the now-deprecated [hass-favicon](https://github.com/thomasloven/hass-favicon) integration originally created by [Thomas Lovén](https://github.com/thomasloven). Thank you, Thomas, for creating the original integration and sharing it with the Home Assistant community.
