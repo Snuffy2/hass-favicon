@@ -4,10 +4,10 @@
 
 | Name                                       |    Stmts |     Miss |   Branch |   BrPart |   Cover |   Missing |
 |------------------------------------------- | -------: | -------: | -------: | -------: | ------: | --------: |
-| custom\_components/favicon/\_\_init\_\_.py |      128 |        4 |       46 |        6 |     94% |38-\>41, 41-\>43, 43-\>45, 53, 112, 130-131 |
+| custom\_components/favicon/\_\_init\_\_.py |      152 |        0 |       52 |        4 |     98% |41-\>44, 44-\>46, 46-\>48, 48-\>52 |
 | custom\_components/favicon/config\_flow.py |       77 |        2 |       30 |        7 |     92% |37, 39-\>41, 92, 96-\>98, 115-\>exit, 117-\>exit, 207-\>213 |
-| custom\_components/favicon/const.py        |        9 |        0 |        0 |        0 |    100% |           |
-| **TOTAL**                                  |  **214** |    **6** |   **76** |   **13** | **93%** |           |
+| custom\_components/favicon/const.py        |        8 |        0 |        0 |        0 |    100% |           |
+| **TOTAL**                                  |  **237** |    **2** |   **82** |   **11** | **96%** |           |
 
 
 ## Setup coverage badge
