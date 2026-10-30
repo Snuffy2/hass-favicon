@@ -112,7 +112,18 @@ async def async_remove_entry(hass: HomeAssistant, _: ConfigEntry) -> bool:
     Returns:
         bool: Whether the original frontend was restored.
     """
-    return await _restore_configured_hooks(hass)
+    data = hass.data.get(DOMAIN, {})
+    entry_lifetime = data.get(_ACTIVE_ENTRY_LIFETIME)
+    completed = False
+    try:
+        restored = await _restore_configured_hooks(hass)
+        completed = True
+        return restored
+    finally:
+        if not completed and data.get(_ACTIVE_ENTRY_LIFETIME) is entry_lifetime:
+            # Home Assistant removes the entry even if this callback fails.
+            data.pop(_ACTIVE_ENTRY_LIFETIME, None)
+            remove_hooks(hass)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -172,19 +183,27 @@ def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping[str, Any]:
 
     try:
         for fn in localpath.iterdir():
+            apple = re.search(RE_APPLE, fn.name)
+            icon = re.search(RE_ICON, fn.name)
+            if fn.name != "favicon.ico" and not apple and not icon:
+                continue
+            try:
+                icon_url = quote(str(path / fn.name), safe="/")
+            except UnicodeEncodeError:
+                _LOGGER.warning("Skipping icon with a non-UTF-8 filename: %r", fn.name)
+                continue
             if fn.name == "favicon.ico":
-                icons["favicon"] = quote(str(path / fn.name), safe="/")
+                icons["favicon"] = icon_url
                 _LOGGER.info("Found favicon: %s", icons["favicon"])
 
-            if re.search(RE_APPLE, fn.name):
-                icons["apple"] = quote(str(path / fn.name), safe="/")
+            if apple:
+                icons["apple"] = icon_url
                 _LOGGER.info("Found apple icon: %s", icons["apple"])
 
-            icon = re.search(RE_ICON, fn.name)
             if icon:
                 manifest.append(
                     {
-                        "src": quote(str(path / fn.name), safe="/"),
+                        "src": icon_url,
                         "sizes": icon.group(1),
                         "type": "image/png",
                     }

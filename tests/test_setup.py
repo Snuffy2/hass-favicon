@@ -7,12 +7,14 @@ import logging
 from pathlib import Path
 import re
 import threading
+from typing import NoReturn
 from unittest.mock import patch
 
 from homeassistant.components import frontend
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers.data_entry_flow import FlowManagerIndexView
+from homeassistant.setup import async_setup_component
 from jinja2 import Template
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -258,6 +260,67 @@ async def test_icon_urls_encode_reserved_filesystem_characters(
     assert f'href="{apple_url}"' in rendered
     assert frontend.MANIFEST_JSON["icons"] == icons["manifest"]
     remove_hooks(hass)
+
+
+def test_malformed_icon_filename_does_not_block_valid_icons(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Skip filenames that cannot form UTF-8 URLs while discovering valid icons.
+
+    Args:
+        hass (HomeAssistant): Home Assistant test instance.
+        monkeypatch (pytest.MonkeyPatch): Fixture for simulating directory entries.
+        caplog (pytest.LogCaptureFixture): Captured warning logs.
+    """
+    filenames = [Path("favicon.ico"), Path("favicon-192x192.\udcff.png")]
+    monkeypatch.setattr(Path, "iterdir", lambda _path: iter(filenames))
+    assert find_icons(hass, "/local/favicons/") == {"favicon": "/local/favicons/favicon.ico"}
+    assert any(record.levelno == logging.WARNING for record in caplog.records)
+
+
+async def test_removal_restores_defaults_when_yaml_application_fails(
+    favicon_frontend: HomeAssistant,
+    hass_client: ClientSessionGenerator,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Remove entry branding even when configured YAML cannot be reapplied.
+
+    Args:
+        favicon_frontend (HomeAssistant): Real frontend with isolated icon files.
+        hass_client (ClientSessionGenerator): Authenticated HTTP client factory.
+        monkeypatch (pytest.MonkeyPatch): Fixture for failing YAML icon discovery.
+    """
+    hass = favicon_frontend
+    original = {key: frontend.MANIFEST_JSON[key] for key in ("name", "short_name", "icons")}
+    yaml_settings = {CONF_TITLE: "YAML home", CONF_ICON_PATH: "/local/favicons/"}
+    assert await async_setup_component(hass, DOMAIN, {DOMAIN: yaml_settings})
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={CONF_TITLE: "Entry home", CONF_ICON_PATH: "/local/empty/"}
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    assert frontend.MANIFEST_JSON["name"] == "Entry home"
+
+    def failed_scan(_hass: HomeAssistant, _path: str) -> NoReturn:
+        """Simulate an icon-discovery failure during YAML restoration.
+
+        Args:
+            _hass (HomeAssistant): Home Assistant test instance.
+            _path (str): Configured icon directory.
+
+        Raises:
+            RuntimeError: Always, to exercise failed YAML restoration.
+        """
+        raise RuntimeError("YAML icon discovery failed")
+
+    monkeypatch.setattr("custom_components.favicon.find_icons", failed_scan)
+    await hass.config_entries.async_remove(entry.entry_id)
+    assert hass.config_entries.async_get_entry(entry.entry_id) is None
+    assert {key: frontend.MANIFEST_JSON[key] for key in original} == original
+    client = await hass_client()
+    response = await client.get("/")
+    assert response.status == 200
+    assert "<title>Home Assistant</title>" in await response.text()
 
 
 async def test_entry_unload_restores_defaults_without_yaml(hass: HomeAssistant) -> None:
