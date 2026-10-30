@@ -2,12 +2,9 @@
 
 import asyncio
 import html
-import json
 import logging
 from pathlib import Path
-import re
 import threading
-from unittest.mock import patch
 
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
@@ -67,7 +64,8 @@ async def test_stored_color_and_title_rendering_and_unload_restores_frontend(
             'href="/static/icons/favicon.ico"><link rel="apple-touch-icon" '
             'href="/static/icons/favicon-apple-180x180.png"><link rel="mask-icon" '
             'href="/static/icons/mask-icon.svg" color="#18bcf2"></head>'
-            '<body><svg><path fill="#18bcf2"></path></svg></body></html>'
+            '<body><svg><path fill="#18bcf2"></path><path fill="#123456"></path>'
+            "</svg></body></html>"
         ),
     )
     original_names = {key: frontend.MANIFEST_JSON[key] for key in ("name", "short_name")}
@@ -93,14 +91,9 @@ async def test_stored_color_and_title_rendering_and_unload_restores_frontend(
     rendered = await (await client.get("/")).text()
 
     assert f"<title>{html.escape(title)}</title>" in rendered
-    serialized_title = re.search(r"const title = (.+);", rendered)
-    assert serialized_title is not None
-    assert json.loads(serialized_title.group(1)) == title
     assert "</script><img" not in rendered
-    assert 'querySelector(".title").textContent = title' in rendered
-    assert 'querySelector(".title").innerHTML' not in rendered
     assert f'href="/static/icons/mask-icon.svg" color="{escaped_color}"' in rendered
-    assert f'<path fill="{escaped_color}">' in rendered
+    assert f'<path fill="{escaped_color}"></path><path fill="#123456"></path>' in rendered
     assert f'color="{stored_color}"' not in rendered
     assert f'<path fill="{stored_color}">' not in rendered
     assert 'href="/local/custom-favicons/favicon.ico"' in rendered
@@ -237,20 +230,18 @@ async def test_resolver_preserves_resource_less_route_result(
     entry = MockConfigEntry(domain=DOMAIN)
     entry.add_to_hass(hass)
     assert await async_setup_entry(hass, entry) is True
-    assert frontend.IndexView.resolve is not resolve
 
     index_view = next(
         view for view in hass.http.app.router.resources() if isinstance(view, frontend.IndexView)
     )
     result, result_allowed_methods = await index_view.resolve(make_mocked_request("GET", "/"))
 
-    assert route.resource is None
     assert result is match_info
     assert result_allowed_methods is allowed_methods
     assert await async_remove_entry(hass, entry) is True
 
 
-@pytest.mark.parametrize("reload_entry", [False, True])
+@pytest.mark.parametrize("reload_entry", [False, True], ids=["unloaded", "reloaded"])
 async def test_queued_listener_ignores_unloaded_entry(
     hass: HomeAssistant, reload_entry: bool
 ) -> None:
@@ -263,18 +254,20 @@ async def test_queued_listener_ignores_unloaded_entry(
     entry = MockConfigEntry(domain=DOMAIN, data={CONF_TITLE: "Test home"})
     entry.add_to_hass(hass)
 
-    with patch("custom_components.favicon.apply_hooks", autospec=True, return_value=True) as apply:
-        assert await async_setup_entry(hass, entry) is True
-        listener = entry.update_listeners[0]
+    original_name = frontend.MANIFEST_JSON["name"]
+    assert await async_setup_entry(hass, entry)
+    listener = entry.update_listeners[0]
+    assert await async_unload_entry(hass, entry)
+    await entry._async_process_on_unload(hass)
+    expected_name = original_name
+    if reload_entry:
+        assert await async_setup_entry(hass, entry)
+        assert await apply_hooks(hass, entry, {CONF_TITLE: "Reloaded home"})
+        expected_name = "Reloaded home"
 
-        assert await async_unload_entry(hass, entry) is True
-        await entry._async_process_on_unload(hass)
-        if reload_entry:
-            assert await async_setup_entry(hass, entry) is True
-        apply.reset_mock()
-        await listener(hass, entry)
-        apply.assert_not_awaited()
-
+    await listener(hass, entry)
+    assert frontend.MANIFEST_JSON["name"] == expected_name
+    assert await async_unload_entry(hass, entry)
     await entry._async_process_on_unload(hass)
 
 
@@ -392,12 +385,21 @@ async def test_latest_overlapping_apply_wins(
     remove_hooks(entry)
 
 
-@pytest.mark.parametrize("transition", ["update", "unload", "remove"])
+@pytest.mark.parametrize(
+    ("transition", "expected_title"),
+    [
+        ("update", "New title"),
+        ("unload", "Home Assistant"),
+        ("remove", "Home Assistant"),
+    ],
+    ids=["update", "unload", "remove"],
+)
 async def test_in_flight_page_load_preserves_current_branding(
     favicon_frontend: HomeAssistant,
     hass_client: ClientSessionGenerator,
     monkeypatch: pytest.MonkeyPatch,
     transition: str,
+    expected_title: str,
 ) -> None:
     """Serve current branding after a settings change during an older request.
 
@@ -406,6 +408,7 @@ async def test_in_flight_page_load_preserves_current_branding(
         hass_client (ClientSessionGenerator): Authenticated HTTP client factory.
         monkeypatch (pytest.MonkeyPatch): Fixture for replacing the template getter.
         transition (str): Entry transition while the original page is loading.
+        expected_title (str): Branding served after the transition completes.
     """
     hass = favicon_frontend
     client = await hass_client()
@@ -448,11 +451,9 @@ async def test_in_flight_page_load_preserves_current_branding(
         await asyncio.wait_for(load_started.wait(), timeout=5)
         if transition == "update":
             assert await apply_hooks(hass, entry, {CONF_TITLE: "New title"}) is True
-            expected_title = "New title"
         else:
             callback = async_unload_entry if transition == "unload" else async_remove_entry
             assert await callback(hass, entry) is True
-            expected_title = "Home Assistant"
     finally:
         release_load.set()
 

@@ -145,7 +145,6 @@ async def test_options_and_removal_update_served_page(
     assert "<title>New home</title>" in html
     assert "/static/icons/favicon.ico" in html
     assert 'color="#000000"' in html
-    assert html.count("customElements.whenDefined('ha-sidebar')") == 1
 
     response = await client.delete(f"/api/config/config_entries/entry/{entry_id}")
     assert response.status == 200

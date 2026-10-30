@@ -50,7 +50,8 @@ async def test_browser_title_icons_and_navigation(
         browser_page (Page): Isolated Chromium page.
     """
     client = await hass_client()
-    await configure_favicon(client, "Family home")
+    title = 'Family "home" & </script><img src=x onerror=alert(1)>'
+    await configure_favicon(client, title)
     await favicon_frontend.async_block_till_done()
     tokens = {
         "hassUrl": str(client.make_url("/")).rstrip("/"),
@@ -66,7 +67,7 @@ async def test_browser_title_icons_and_navigation(
     )
     response = await browser_page.goto(str(client.make_url("/")))
     assert response is not None and response.status == 200
-    await expect(browser_page).to_have_title(re.compile(r"Family home$"))
+    await expect(browser_page).to_have_title(re.compile(re.escape(title) + "$"))
     await expect(browser_page.locator('link[rel="icon"]')).to_have_attribute(
         "href", "/local/favicons/favicon.ico"
     )
@@ -77,10 +78,11 @@ async def test_browser_title_icons_and_navigation(
         "color", "#123456"
     )
 
-    await expect(browser_page.locator("ha-sidebar .title")).to_have_text("Family home")
+    await expect(browser_page.locator("ha-sidebar .title")).to_have_text(title)
+    await expect(browser_page.locator("ha-sidebar .title img")).to_have_count(0)
     await browser_page.get_by_role("link", name="Settings", exact=True).click()
-    await expect(browser_page).to_have_title(re.compile(r"Settings.*Family home$"))
+    await expect(browser_page).to_have_title(re.compile("Settings.*" + re.escape(title) + "$"))
 
     await browser_page.reload()
-    await expect(browser_page.locator("ha-sidebar .title")).to_have_text("Family home")
-    await expect(browser_page).to_have_title(re.compile(r"Settings.*Family home$"))
+    await expect(browser_page.locator("ha-sidebar .title")).to_have_text(title)
+    await expect(browser_page).to_have_title(re.compile("Settings.*" + re.escape(title) + "$"))
