@@ -76,3 +76,52 @@ async def test_user_form(hass: HomeAssistant) -> None:
     result = await flow.async_step_user(settings)
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_ICON_COLOR] == "#ff0000"
+
+
+async def test_options_flow(hass: HomeAssistant, enable_custom_integrations: None) -> None:
+    """Open and save settings through HA's options flow manager.
+
+    Args:
+        hass (HomeAssistant): Home Assistant test instance.
+        enable_custom_integrations (None): Enable loading the integration flow.
+    """
+    settings = {
+        CONF_TITLE: "Test Home Assistant",
+        CONF_ICON_PATH: "/local/favicons/",
+        CONF_ICON_COLOR: "#18bcf2",
+    }
+    entry = MockConfigEntry(domain=DOMAIN, data=settings)
+    entry.add_to_hass(hass)
+    with patch("homeassistant.config_entries.async_process_deps_reqs"):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] is FlowResultType.FORM
+    schema = result["data_schema"]
+    assert schema is not None
+    assert schema({})[CONF_ICON_COLOR] == [24, 188, 242]
+    updated = {**settings, CONF_TITLE: "Updated Home Assistant", CONF_ICON_COLOR: [255, 0, 0]}
+    with patch.object(hass.config_entries, "async_reload", return_value=True) as reload_entry:
+        result = await hass.config_entries.options.async_configure(result["flow_id"], updated)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.data == {**updated, CONF_ICON_COLOR: "#ff0000"}
+    assert entry.options == {}
+    reload_entry.assert_awaited_once_with(entry.entry_id)
+
+
+async def test_update_listener_cleanup(hass: HomeAssistant) -> None:
+    """Remove update listeners on unload so reloads do not accumulate callbacks.
+
+    Args:
+        hass (HomeAssistant): Home Assistant test instance.
+    """
+    entry = MockConfigEntry(domain=DOMAIN, data={CONF_TITLE: "Test home"})
+    entry.add_to_hass(hass)
+    with patch("custom_components.favicon.apply_hooks", autospec=True, return_value=True) as apply:
+        for _ in range(2):
+            assert await async_setup_entry(hass, entry)
+            assert len(entry.update_listeners) == 1
+            await entry._async_process_on_unload(hass)
+            assert not entry.update_listeners
+        apply.reset_mock()
+        hass.config_entries.async_update_entry(entry, data={CONF_TITLE: "Unloaded"})
+        await hass.async_block_till_done()
+        apply.assert_not_awaited()
