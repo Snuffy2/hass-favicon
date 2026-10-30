@@ -447,21 +447,24 @@ async def test_development_frontend_templates_are_not_cached(
     remove_hooks(hass)
 
 
-def test_missing_icon_directory_warns_and_continues(
-    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+@pytest.mark.parametrize(
+    "path", ["/local/missing-directory-for-warning-test/", "/local/invalid\x00/"]
+)
+def test_unreadable_icon_directory_warns_and_continues(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture, path: str
 ) -> None:
     """Return no icons and warn when the configured folder is unavailable.
 
     Args:
         hass (HomeAssistant): Home Assistant test instance.
         caplog (pytest.LogCaptureFixture): Captured warning logs.
+        path (str): Missing or malformed icon directory.
     """
     with caplog.at_level(logging.WARNING, logger="custom_components.favicon"):
-        assert find_icons(hass, "/local/missing-directory-for-warning-test/") == {}
+        assert find_icons(hass, path) == {}
 
     assert any(
-        record.levelno == logging.WARNING
-        and "missing-directory-for-warning-test" in record.getMessage()
+        record.levelno == logging.WARNING and Path(path).name in record.getMessage()
         for record in caplog.records
     )
 

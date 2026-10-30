@@ -169,7 +169,7 @@ def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping[str, Any]:
                     }
                 )
                 _LOGGER.info("Found icon: %s", path / fn.name)
-    except OSError as err:
+    except (OSError, ValueError) as err:
         _LOGGER.warning(
             "Unable to read favicon icon directory %s; check that it exists and is readable: %s",
             localpath,
