@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 import re
 from typing import Any
+from urllib.parse import quote
 
 from aiohttp import web
 from aiohttp.web_urldispatcher import ResourceRoute, UrlMappingMatchInfo
@@ -58,6 +59,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     _LOGGER.debug("[async_setup] manifest_icons: %s", hass.data[DOMAIN]["manifest_icons"])
 
     conf = config.get(DOMAIN)
+    hass.data[DOMAIN]["yaml_config"] = dict(conf) if conf else {}
     if not conf:
         return True
     for key in CONF_KEYS:
@@ -94,7 +96,7 @@ async def async_remove_entry(hass: HomeAssistant, _: ConfigEntry) -> bool:
     Returns:
         bool: Whether the original frontend was restored.
     """
-    return remove_hooks(hass)
+    return await _restore_configured_hooks(hass)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -108,7 +110,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         bool: Whether unloading succeeded.
     """
     _LOGGER.info("Unloading: %s", entry.data)
-    return remove_hooks(hass)
+    return await _restore_configured_hooks(hass)
 
 
 async def _update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
@@ -149,18 +151,18 @@ def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping[str, Any]:
     try:
         for fn in localpath.iterdir():
             if fn.name == "favicon.ico":
-                icons["favicon"] = path / fn.name
+                icons["favicon"] = quote(str(path / fn.name), safe="/")
                 _LOGGER.info("Found favicon: %s", icons["favicon"])
 
             if re.search(RE_APPLE, fn.name):
-                icons["apple"] = path / fn.name
+                icons["apple"] = quote(str(path / fn.name), safe="/")
                 _LOGGER.info("Found apple icon: %s", icons["apple"])
 
             icon = re.search(RE_ICON, fn.name)
             if icon:
                 manifest.append(
                     {
-                        "src": path / fn.name,
+                        "src": quote(str(path / fn.name), safe="/"),
                         "sizes": icon.group(1),
                         "type": "image/png",
                     }
@@ -341,3 +343,22 @@ def remove_hooks(hass: HomeAssistant) -> bool:
     for key in CONF_KEYS:
         data.pop(key, None)
     return True
+
+
+async def _restore_configured_hooks(hass: HomeAssistant) -> bool:
+    """Restore YAML customizations after a config entry stops overriding them.
+
+    Args:
+        hass (HomeAssistant): Home Assistant instance.
+
+    Returns:
+        bool: Whether the configured frontend state was restored.
+    """
+    data = hass.data.get(DOMAIN, {})
+    yaml_config = data.get("yaml_config", {})
+    for key in CONF_KEYS:
+        data.pop(key, None)
+    data.update(yaml_config)
+    if yaml_config:
+        return await apply_hooks(hass, dict(yaml_config))
+    return remove_hooks(hass)

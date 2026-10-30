@@ -22,9 +22,23 @@ from custom_components.favicon import (
     async_setup,
     async_setup_entry,
     async_unload_entry,
+    find_icons,
+    remove_hooks,
 )
 from custom_components.favicon.config_flow import FaviconConfigFlow
 from custom_components.favicon.const import CONF_ICON_COLOR, CONF_ICON_PATH, CONF_TITLE, DOMAIN
+
+
+def _create_icon_files(directory: Path, filenames: tuple[str, ...]) -> None:
+    """Create the local files needed by icon discovery tests.
+
+    Args:
+        directory (Path): Directory in the Home Assistant configuration path.
+        filenames (tuple[str, ...]): Icon filenames to create.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    for filename in filenames:
+        (directory / filename).touch()
 
 
 @pytest.mark.parametrize("configured", [False, True])
@@ -62,7 +76,6 @@ async def test_custom_title_is_rendered_safely_and_unload_restores_frontend(
         hass (HomeAssistant): Home Assistant test instance.
         monkeypatch (pytest.MonkeyPatch): Fixture for replacing frontend interfaces.
     """
-    original_manifest_icons = frontend.MANIFEST_JSON["icons"].copy()
     index_view = frontend.IndexView(None, hass)
     monkeypatch.setattr(
         hass,
@@ -75,17 +88,25 @@ async def test_custom_title_is_rendered_safely_and_unload_restores_frontend(
         frontend.IndexView,
         "get_template",
         lambda _self: Template(
-            '<html><head><title>Home Assistant</title><link rel="mask-icon" '
+            '<html><head><title>Home Assistant</title><link rel="icon" '
+            'href="/static/icons/favicon.ico"><link rel="apple-touch-icon" '
+            'href="/static/icons/favicon-apple-180x180.png"><link rel="mask-icon" '
             'href="/static/icons/mask-icon.svg" color="#18bcf2"></head>'
             '<body><svg><path fill="#18bcf2"></path></svg></body></html>'
         ),
     )
     original_get_template = frontend.IndexView.get_template
+    yaml_icon_directory = Path(hass.config.path("www/yaml-favicons"))
+    await hass.async_add_executor_job(
+        _create_icon_files,
+        yaml_icon_directory,
+        ("favicon.ico", "favicon-apple-180x180.png", "favicon-192x192.png"),
+    )
     title = 'Lab "quoted"\n</script><img src=x onerror=alert(1)>'
     config = {
         DOMAIN: {
             CONF_TITLE: title,
-            CONF_ICON_PATH: "/local/missing-favicons/",
+            CONF_ICON_PATH: "/local/yaml-favicons/",
             CONF_ICON_COLOR: "#ff0000",
         }
     }
@@ -102,23 +123,114 @@ async def test_custom_title_is_rendered_safely_and_unload_restores_frontend(
     assert 'querySelector(".title").innerHTML' not in rendered
     assert 'href="/static/icons/mask-icon.svg" color="#ff0000"' in rendered
     assert '<path fill="#ff0000">' in rendered
+    assert 'href="/local/yaml-favicons/favicon.ico"' in rendered
+    assert 'href="/local/yaml-favicons/favicon-apple-180x180.png"' in rendered
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_TITLE: "Entry title",
+            CONF_ICON_PATH: "/local/entry-icons/",
+            CONF_ICON_COLOR: "#00ff00",
+        },
+    )
+    assert await async_setup_entry(hass, entry) is True
+    entry_rendered = index_view.get_template().render()
+    assert "<title>Entry title</title>" in entry_rendered
+    assert 'color="#00ff00"' in entry_rendered
 
     for view in hass.http.app.router.resources():
         if isinstance(view, frontend.IndexView):
             view._template_cache = Template("cached custom page")
-    entry = MockConfigEntry(domain=DOMAIN, data=config[DOMAIN])
     assert await async_unload_entry(hass, entry) is True
     assert all(
         view._template_cache is None
         for view in hass.http.app.router.resources()
         if isinstance(view, frontend.IndexView)
     )
+    assert frontend.MANIFEST_JSON["icons"] == [
+        {
+            "src": "/local/yaml-favicons/favicon-192x192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+        }
+    ]
+    assert frontend.MANIFEST_JSON["name"] == title
+    assert frontend.MANIFEST_JSON["short_name"] == title
+    yaml_rendered = index_view.get_template().render()
+    assert f"<title>{html.escape(title)}</title>" in yaml_rendered
+    assert 'color="#ff0000"' in yaml_rendered
+    assert 'href="/local/yaml-favicons/favicon.ico"' in yaml_rendered
+    assert await async_remove_entry(hass, entry) is True
+    assert frontend.MANIFEST_JSON["name"] == title
+    assert await async_remove_entry(hass, entry) is True
+    remove_hooks(hass)
+    assert frontend.IndexView.get_template is original_get_template
+
+
+async def test_icon_urls_encode_reserved_filesystem_characters(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Encode special filesystem characters in emitted icon and manifest URLs.
+
+    Args:
+        hass (HomeAssistant): Home Assistant test instance.
+        monkeypatch (pytest.MonkeyPatch): Fixture for replacing the frontend template.
+    """
+    path_str = "/local/favicons#2"
+    icon_directory = Path(hass.config.path("www/favicons#2"))
+    filenames = (
+        "favicon.ico",
+        'favicon-apple-180x180 #? ".png',
+        'favicon-192x192.png #? ".png',
+    )
+    await hass.async_add_executor_job(_create_icon_files, icon_directory, filenames)
+
+    monkeypatch.setattr(
+        frontend.IndexView,
+        "get_template",
+        lambda _self: Template(
+            '<html><head><link rel="icon" href="/static/icons/favicon.ico">'
+            '<link rel="apple-touch-icon" '
+            'href="/static/icons/favicon-apple-180x180.png"></head><body></body></html>'
+        ),
+    )
+    icons = find_icons(hass, path_str)
+    favicon_url = "/local/favicons%232/favicon.ico"
+    apple_url = "/local/favicons%232/favicon-apple-180x180%20%23%3F%20%22.png"
+    manifest_url = "/local/favicons%232/favicon-192x192.png%20%23%3F%20%22.png"
+    assert icons["favicon"] == favicon_url
+    assert icons["apple"] == apple_url
+    assert icons["manifest"] == [{"src": manifest_url, "sizes": "192x192", "type": "image/png"}]
+
+    assert await async_setup(hass, {DOMAIN: {CONF_ICON_PATH: path_str}}) is True
+    rendered = frontend.IndexView(None, hass).get_template().render()
+    assert f'href="{favicon_url}"' in rendered
+    assert f'href="{apple_url}"' in rendered
+    assert frontend.MANIFEST_JSON["icons"] == icons["manifest"]
+    remove_hooks(hass)
+
+
+async def test_entry_unload_restores_defaults_without_yaml(hass: HomeAssistant) -> None:
+    """Restore the default frontend when an entry has no YAML configuration.
+
+    Args:
+        hass (HomeAssistant): Home Assistant test instance.
+    """
+    original_manifest_icons = frontend.MANIFEST_JSON["icons"].copy()
+    await async_setup(hass, {})
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_TITLE: "Entry only", CONF_ICON_PATH: "/local/missing-icons/"},
+    )
+    with patch("custom_components.favicon.apply_hooks", autospec=True, return_value=True):
+        assert await async_setup_entry(hass, entry) is True
+    assert await async_unload_entry(hass, entry) is True
     assert frontend.MANIFEST_JSON["icons"] == original_manifest_icons
     assert frontend.MANIFEST_JSON["name"] == "Home Assistant"
     assert frontend.MANIFEST_JSON["short_name"] == "Assistant"
-    assert frontend.IndexView.get_template is original_get_template
     assert await async_remove_entry(hass, entry) is True
-    assert await async_remove_entry(hass, entry) is True
+    assert frontend.MANIFEST_JSON["name"] == "Home Assistant"
 
 
 async def test_entry_unload_unregisters_update_listener(hass: HomeAssistant) -> None:
