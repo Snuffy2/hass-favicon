@@ -274,6 +274,9 @@ def remove_hooks(hass: HomeAssistant) -> bool:
     """
     data = hass.data[DOMAIN]
     frontend.IndexView.get_template = data["get_template"]  # type: ignore[method-assign]
+    for view in hass.http.app.router.resources():
+        if isinstance(view, frontend.IndexView):
+            view._template_cache = None  # noqa: SLF001
     frontend.add_manifest_json_key("icons", data["manifest_icons"].copy())
     frontend.add_manifest_json_key("name", "Home Assistant")
     frontend.add_manifest_json_key("short_name", "Assistant")

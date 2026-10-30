@@ -43,6 +43,11 @@ jobs:
           ignore-nothing-to-cache: true
           cache-dependency-glob: uv.lock
 
+      - name: Install test dependencies and Chromium
+        run: |
+          uv sync --locked --group pytest
+          uv run --locked --group pytest python -m playwright install --with-deps chromium
+
       - name: Run pytest with coverage from the lock
         run: uv run --locked --group pytest pytest
 

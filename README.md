@@ -68,3 +68,28 @@ OR
 *  `launch_icon_color` - The color selected for the launch logo and Safari pinned-tab icon. The default is `#18BCF2`.
 
 ![](https://user-images.githubusercontent.com/1299821/62975899-c29d6480-be1b-11e9-9b6b-9d160ef8b439.jpg)
+
+## Development tests
+
+Install the locked test dependencies and Chromium, then run the suite:
+
+```sh
+uv sync --locked --group dev
+./.venv/bin/python -m playwright install chromium
+./.venv/bin/pytest
+```
+
+On Linux, use `playwright install --with-deps chromium` to install Chromium's
+system libraries too. The tests use an isolated temporary Home Assistant
+configuration and generated icon files; no running Home Assistant is required.
+
+The suite includes integration tests for YAML setup, configuration, options,
+validation and removal; end-to-end HTTP tests for the configuration API, page,
+manifest and icon downloads; and Chromium acceptance tests for the displayed
+title, icon metadata, sidebar title, Settings navigation and page refresh. The
+browser tests authenticate a temporary test user and navigate the real frontend;
+configuration forms are covered through Home Assistant's flow managers and HTTP API.
+
+Run one layer with `./.venv/bin/pytest -m integration`, `-m e2e`, or `-m end_user`.
+To run without a browser installation, use `./.venv/bin/pytest -m 'not end_user'`.
+CI installs Chromium and runs every layer.
