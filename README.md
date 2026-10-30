@@ -1,5 +1,4 @@
-favicon
-=======
+# Favicon Changer
 
 [![GitHub Downloads][downloads-shield]][releases]
 [![GitHub Latest Downloads][downloads-latest-shield]][releases]
@@ -10,75 +9,47 @@ favicon
 [![License][license-shield]](LICENSE)
 [![hacs][hacsbadge]][hacs]
 
-Change the gui page title, favicon, app icons, and launch icon color of your Home Assistant instance
+Customize the page title, favicon, app icons, and launch icon color of your Home Assistant instance.
 
-![browser](https://user-images.githubusercontent.com/1299821/62975860-ad283a80-be1b-11e9-836a-d58a1732fb21.png)
+![Example browser title and icon](https://user-images.githubusercontent.com/1299821/62975860-ad283a80-be1b-11e9-836a-d58a1732fb21.png)
 
-# Installation instructions
+## Installation
 
-*  Go to HACS
+1. In HACS, add `https://github.com/Snuffy2/hass-favicon` as a custom repository.
+2. Download `Favicon Changer (Snuffy2)` and restart Home Assistant.
+3. Copy an icon set into `<your config dir>/www/favicons/`. Ready-to-use sets are included in [`icons/`](icons/): `dev`, `green`, `orange`, and `red`. If you created the `www` directory, restart Home Assistant before using its files.
 
-*  Add as a Custom Repository: https://github.com/Snuffy2/hass-favicon
+Home Assistant serves files in `www` under `/local/`, so the frontend path for this example is `/local/favicons/`. You can also use your own icons, such as [Home Assistant iOS alternate icons](https://github.com/home-assistant/iOS/tree/main/icons/Alternates), or generate them with an icon generator.
 
-*  Download `hass-favicon (Snuffy2)`
+## Configuration
 
-*  Restart Home Assistant
-
-*  Get some icons
-
-    *  Ready-to-use icon sets are included in [`icons/`](icons/): `dev`, `green`, `orange`, and `red`. Copy the files from one set into `<your config dir>/www/favicons/`, then set the integration's Icon path to `/local/favicons/`.
-
-    *  There are some nice ones available [here](https://github.com/home-assistant/iOS/tree/main/icons/Alternates)
-  
-    *  You can generate favicons from them using an online tool, such as [this one](https://realfavicongenerator.net/).
-
-*  Put your icons in e.g. `<your config dir>/www/favicons/`. Note that `<your config dir>/www/` translates to `/local/` for the Icon path.
-
-*  If you created `<your config dir>/www/` you need to restart Home Assistant once before any icons will be found.
-
-### About the icons
-
-`hass-favicon` will scan the specified directory and automatically apply icons when found based on their filename. There are three types of icons, and it's important that you get the filenames correct.
-
-*  `favicon.ico` - The icon which is displayed on the browser tab and in the bookmark menu
-
-*  `favicon-apple-<anything>.png` - The icon which is displayed if you save your interface to the home screen of your iDevice.
-
-*  `favicon-<size>x<size>.png` - Used by android devices. `<size>` indicates the icon size in pixels, e.g. `favicon-1024x1024.png`.
-
-## Add Integration
-
-Configuration is through the UI only.
+Configuration is through the Home Assistant UI. Add **Favicon** from Settings > Devices & services, or use this shortcut:
 
 [![Open your Home Assistant instance and install hass-favicon.](https://my.home-assistant.io/badges/brand.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=favicon)
 
-OR 
+Enter the following settings and submit the form:
 
-*  Go to your Home Assistant configuration and to Integrations
+- **Page title**: The title used in the browser and Home Assistant sidebar. The default is `Home Assistant`.
+- **Icon path**: The frontend directory containing the icons, such as `/local/favicons/`. It must begin with `/local/` and should point to the directory, not an individual file.
+- **Launch icon color**: The color for the launch logo and Safari pinned-tab icon. The default is `#18BCF2`.
 
-*  Add a "Favicon" integration
+Only one Favicon configuration is allowed. To change these settings later, open the integration's options. Refresh the page after saving; clear your browser cache if old icons remain.
 
------
+![Favicon configuration](https://user-images.githubusercontent.com/1299821/65991117-1d068900-e48d-11e9-9002-f2253fafa190.gif)
 
-*  Enter your wanted title, the directory containing your icons (e.g. `Icon path: /local/favicons/`), and choose a launch icon color.
+## Icon filenames
 
-*  Press submit
+The integration scans the configured directory for these filenames:
 
-*  Refresh the page. Make sure to clear the cache of your browser to get the new icons.
+- `favicon.ico`: Browser tab and bookmark icon.
+- `favicon-apple-<anything>.png`: Apple touch icon for a saved home-screen shortcut.
+- `favicon-<width>x<height>.png`: App manifest icon, for example `favicon-192x192.png`.
 
-![integration](https://user-images.githubusercontent.com/1299821/65991117-1d068900-e48d-11e9-9002-f2253fafa190.gif)
+![Example icons](https://user-images.githubusercontent.com/1299821/62975899-c29d6480-be1b-11e9-9b6b-9d160ef8b439.jpg)
 
-### Options
+## Troubleshooting
 
-*  `title` - The title to display at the top of the window or browser tab.
-
-*  `icon_path:` - The path (frontend path) of the directory containing your icons.
-   Use `/local/favicon/` for files in `<your config dir>/www/favicon/`, rather than a path to `favicon.ico` itself.
-
-*  `launch_icon_color` - The color selected for the launch logo and Safari pinned-tab icon. The default is `#18BCF2`.
-
-![](https://user-images.githubusercontent.com/1299821/62975899-c29d6480-be1b-11e9-9b6b-9d160ef8b439.jpg)
-
+If icons do not appear, check that the icon path starts with `/local/`, that the corresponding directory under `www` exists and is readable, and that the filenames match the patterns above. If `www` was newly created, restart Home Assistant. Refresh the page and clear the browser cache if it still shows old icons. Check the Home Assistant logs for directory-reading warnings.
 
 ## Contributing
 
