@@ -44,8 +44,10 @@ Only one Favicon configuration is allowed. To change these settings later, open 
 The integration scans the configured directory for these filenames:
 
 - `favicon.ico`: Browser tab and bookmark icon.
-- `favicon-apple-<anything>.png`: Apple touch icon for a saved home-screen shortcut.
-- `favicon-<width>x<height>.png`: App manifest icon, for example `favicon-192x192.png`.
+- `favicon-apple-<anything>.png`: Apple touch icon for a saved home-screen shortcut. If there are several, `favicon-apple-180x180.png` is used, otherwise the first in alphabetical order.
+- `favicon-<width>x<height>.png`: App manifest icon, for example `favicon-192x192.png`. Other image formats such as `.webp` also work; the manifest lists each icon with the type matching its extension.
+
+Files matching these patterns that are not images, such as `favicon-192x192.png.bak`, are ignored.
 
 ![Example icons](https://user-images.githubusercontent.com/1299821/62975899-c29d6480-be1b-11e9-9b6b-9d160ef8b439.jpg)
 

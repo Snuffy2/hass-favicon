@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from html import escape
 import json
 import logging
+import mimetypes
 from pathlib import Path
 import re
 from typing import Any
@@ -42,6 +43,7 @@ type FaviconConfigEntry = ConfigEntry[FaviconRuntimeData]
 
 
 RE_APPLE = r"^favicon-apple-"
+PREFERRED_APPLE_ICON = "favicon-apple-180x180.png"
 RE_ICON = r"^favicon-(\d+x\d+)\..+"
 # Regex to match hex color codes (e.g., #18bcf2, #123ABC)
 RE_HEX_COLOR = r"#(?:[0-9a-fA-F]{6})"
@@ -130,10 +132,15 @@ def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping[str, Any]:
     _LOGGER.info("Looking for icons in: %s", localpath)
 
     try:
-        for fn in localpath.iterdir():
+        # Sort so the chosen icons and manifest order do not depend on directory order.
+        for fn in sorted(localpath.iterdir()):
             apple = re.search(RE_APPLE, fn.name)
             icon = re.search(RE_ICON, fn.name)
             if fn.name != "favicon.ico" and not apple and not icon:
+                continue
+            icon_type, _ = mimetypes.guess_type(fn.name)
+            if (apple or icon) and (icon_type is None or not icon_type.startswith("image/")):
+                _LOGGER.info("Skipping icon that is not an image file: %s", path / fn.name)
                 continue
             try:
                 icon_url = quote(str(path / fn.name), safe="/")
@@ -144,7 +151,7 @@ def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping[str, Any]:
                 icons["favicon"] = icon_url
                 _LOGGER.info("Found favicon: %s", icons["favicon"])
 
-            if apple:
+            if apple and ("apple" not in icons or fn.name == PREFERRED_APPLE_ICON):
                 icons["apple"] = icon_url
                 _LOGGER.info("Found apple icon: %s", icons["apple"])
 
@@ -153,7 +160,7 @@ def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping[str, Any]:
                     {
                         "src": icon_url,
                         "sizes": icon.group(1),
-                        "type": "image/png",
+                        "type": icon_type,
                     }
                 )
                 _LOGGER.info("Found icon: %s", path / fn.name)

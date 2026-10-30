@@ -185,6 +185,64 @@ def test_malformed_icon_filename_does_not_block_valid_icons(
     )
 
 
+@pytest.mark.parametrize(
+    ("filenames", "apple"),
+    [
+        (
+            ("favicon-apple-touch.png", "favicon-apple-180x180.png", "favicon-apple-120x120.png"),
+            "favicon-apple-180x180.png",
+        ),
+        (("favicon-apple-touch.png", "favicon-apple-120x120.png"), "favicon-apple-120x120.png"),
+    ],
+    ids=["preferred-size", "alphabetical"],
+)
+def test_apple_icon_choice_is_deterministic(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    filenames: tuple[str, ...],
+    apple: str,
+) -> None:
+    """Choose the same Apple icon regardless of directory listing order.
+
+    Args:
+        hass (HomeAssistant): Home Assistant test instance.
+        monkeypatch (pytest.MonkeyPatch): Fixture for simulating directory entries.
+        filenames (tuple[str, ...]): Apple icon filenames in listing order.
+        apple (str): Filename expected to be chosen.
+    """
+    for listing in (filenames, tuple(reversed(filenames))):
+        monkeypatch.setattr(Path, "iterdir", lambda _path, names=listing: iter(map(Path, names)))
+        assert find_icons(hass, "/local/favicons/") == {"apple": f"/local/favicons/{apple}"}
+
+
+def test_manifest_icon_types_follow_file_extensions(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """List manifest icons with their real image type and skip non-image files.
+
+    Args:
+        hass (HomeAssistant): Home Assistant test instance.
+        monkeypatch (pytest.MonkeyPatch): Fixture for simulating directory entries.
+    """
+    filenames = [
+        "favicon-512x512.webp",
+        "favicon-192x192.png",
+        "favicon-192x192.png.bak",
+        "favicon-apple-180x180.txt",
+    ]
+    monkeypatch.setattr(Path, "iterdir", lambda _path: iter(map(Path, filenames)))
+    assert find_icons(hass, "/local/favicons/") == {
+        "manifest": [
+            {"src": "/local/favicons/favicon-192x192.png", "sizes": "192x192", "type": "image/png"},
+            {
+                "src": "/local/favicons/favicon-512x512.webp",
+                "sizes": "512x512",
+                "type": "image/webp",
+            },
+        ]
+    }
+
+
 async def test_remove_entry_without_runtime_data_is_safe(hass: HomeAssistant) -> None:
     """Leave the frontend alone when removing an entry that was never loaded.
 
