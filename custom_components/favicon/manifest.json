@@ -1,6 +1,7 @@
 {
   "domain": "favicon",
   "name": "Favicon Changer (Snuffy2)",
+  "categories": ["computers_network"],
   "codeowners": ["@Snuffy2", "@thomasloven"],
   "config_flow": true,
   "dependencies": ["frontend"],
