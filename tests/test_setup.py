@@ -1,14 +1,28 @@
 """Regression tests for Home Assistant setup and form contracts."""
 
+import html
+import json
+from pathlib import Path
+import re
+from types import SimpleNamespace
 from unittest.mock import patch
 
+from homeassistant.components import frontend
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers.data_entry_flow import FlowManagerIndexView
+from jinja2 import Template
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+import yaml
 
-from custom_components.favicon import async_setup, async_setup_entry
+from custom_components.favicon import (
+    CONFIG_SCHEMA,
+    async_remove_entry,
+    async_setup,
+    async_setup_entry,
+    async_unload_entry,
+)
 from custom_components.favicon.config_flow import FaviconConfigFlow
 from custom_components.favicon.const import CONF_ICON_COLOR, CONF_ICON_PATH, CONF_TITLE, DOMAIN
 
@@ -29,6 +43,101 @@ async def test_yaml_setup(hass: HomeAssistant, configured: bool) -> None:
             apply.assert_awaited_once_with(hass, settings)
         else:
             apply.assert_not_awaited()
+
+
+def test_yaml_schema_accepts_sample_configuration() -> None:
+    """Validate the supported YAML keys while permitting other HA sections."""
+    sample_path = Path(__file__).parents[1] / "test" / "configuration.yaml"
+    configuration = yaml.safe_load(sample_path.read_text(encoding="utf-8"))
+
+    assert CONFIG_SCHEMA(configuration) == configuration
+
+
+async def test_custom_title_is_rendered_safely_and_unload_restores_frontend(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Escape custom title output and restore cached frontend state on unload.
+
+    Args:
+        hass (HomeAssistant): Home Assistant test instance.
+        monkeypatch (pytest.MonkeyPatch): Fixture for replacing frontend interfaces.
+    """
+    original_manifest_icons = frontend.MANIFEST_JSON["icons"].copy()
+    index_view = frontend.IndexView(None, hass)
+    monkeypatch.setattr(
+        hass,
+        "http",
+        SimpleNamespace(
+            app=SimpleNamespace(router=SimpleNamespace(resources=lambda: [index_view]))
+        ),
+    )
+    monkeypatch.setattr(
+        frontend.IndexView,
+        "get_template",
+        lambda _self: Template(
+            '<html><head><title>Home Assistant</title><link rel="mask-icon" '
+            'href="/static/icons/mask-icon.svg" color="#18bcf2"></head>'
+            '<body><svg><path fill="#18bcf2"></path></svg></body></html>'
+        ),
+    )
+    original_get_template = frontend.IndexView.get_template
+    title = 'Lab "quoted"\n</script><img src=x onerror=alert(1)>'
+    config = {
+        DOMAIN: {
+            CONF_TITLE: title,
+            CONF_ICON_PATH: "/local/missing-favicons/",
+            CONF_ICON_COLOR: "#ff0000",
+        }
+    }
+
+    assert await async_setup(hass, config) is True
+    rendered = index_view.get_template().render()
+
+    assert f"<title>{html.escape(title)}</title>" in rendered
+    serialized_title = re.search(r"const title = (.+);", rendered)
+    assert serialized_title is not None
+    assert json.loads(serialized_title.group(1)) == title
+    assert "</script><img" not in rendered
+    assert 'querySelector(".title").textContent = title' in rendered
+    assert 'querySelector(".title").innerHTML' not in rendered
+    assert 'href="/static/icons/mask-icon.svg" color="#ff0000"' in rendered
+    assert '<path fill="#ff0000">' in rendered
+
+    for view in hass.http.app.router.resources():
+        if isinstance(view, frontend.IndexView):
+            view._template_cache = Template("cached custom page")
+    entry = MockConfigEntry(domain=DOMAIN, data=config[DOMAIN])
+    assert await async_unload_entry(hass, entry) is True
+    assert all(
+        view._template_cache is None
+        for view in hass.http.app.router.resources()
+        if isinstance(view, frontend.IndexView)
+    )
+    assert frontend.MANIFEST_JSON["icons"] == original_manifest_icons
+    assert frontend.MANIFEST_JSON["name"] == "Home Assistant"
+    assert frontend.MANIFEST_JSON["short_name"] == "Assistant"
+    assert frontend.IndexView.get_template is original_get_template
+    assert await async_remove_entry(hass, entry) is True
+    assert await async_remove_entry(hass, entry) is True
+
+
+async def test_entry_unload_unregisters_update_listener(hass: HomeAssistant) -> None:
+    """Remove the update listener when Home Assistant processes entry unload.
+
+    Args:
+        hass (HomeAssistant): Home Assistant test instance.
+    """
+    entry = MockConfigEntry(domain=DOMAIN, data={CONF_TITLE: "Test home"})
+    entry.add_to_hass(hass)
+
+    assert await async_setup(hass, {}) is True
+    with patch("custom_components.favicon.apply_hooks", autospec=True, return_value=True):
+        assert await async_setup_entry(hass, entry) is True
+    assert len(entry.update_listeners) == 1
+
+    assert await async_unload_entry(hass, entry) is True
+    await entry._async_process_on_unload(hass)
+    assert entry.update_listeners == []
 
 
 async def test_entry_setup_and_update(hass: HomeAssistant) -> None:

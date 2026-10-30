@@ -14,6 +14,7 @@ from homeassistant.components import frontend
 from homeassistant.config_entries import ConfigEntry, ConfigType
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
+import voluptuous as vol
 
 from .const import CONF_ICON_COLOR, CONF_ICON_PATH, CONF_KEYS, CONF_TITLE, DOMAIN
 
@@ -22,7 +23,18 @@ _LOGGER: logging.Logger = logging.getLogger(__name__)
 RE_APPLE = r"^favicon-apple-"
 RE_ICON = r"^favicon-(\d+x\d+)\..+"
 
-CONFIG_SCHEMA: Callable[[dict], dict] = cv.empty_config_schema(DOMAIN)
+CONFIG_SCHEMA: vol.Schema = vol.Schema(
+    {
+        vol.Optional(DOMAIN): vol.Schema(
+            {
+                vol.Optional(CONF_TITLE): cv.string,
+                vol.Optional(CONF_ICON_PATH): cv.string,
+                vol.Optional(CONF_ICON_COLOR): vol.All(cv.string, vol.Match(r"^#[0-9a-fA-F]{6}$")),
+            }
+        )
+    },
+    extra=vol.ALLOW_EXTRA,
+)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -96,7 +108,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         bool: Whether unloading succeeded.
     """
     _LOGGER.info("Unloading: %s", entry.data)
-    return True
+    return remove_hooks(hass)
 
 
 async def _update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
@@ -114,7 +126,7 @@ async def _update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> No
     await apply_hooks(hass, dict(config_entry.data))
 
 
-def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping:
+def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping[str, Any]:
     """Find icons in a local folder.
 
     Args:
@@ -122,10 +134,10 @@ def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping:
         path_str (str): Frontend path under /local/ to search.
 
     Returns:
-        MutableMapping: Discovered icon paths and manifest entries.
+        MutableMapping[str, Any]: Discovered icon paths and manifest entries.
     """
-    icons: MutableMapping = {}
-    manifest: list = []
+    icons: dict[str, Any] = {}
+    manifest: list[dict[str, Any]] = []
     if not path_str or not path_str.startswith("/local/"):
         _LOGGER.error("Invalid Path: %s", path_str)
         return icons
@@ -134,25 +146,33 @@ def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping:
     localpath: Path = Path(hass.config.path(localpath_str))
     _LOGGER.info("Looking for icons in: %s", localpath)
 
-    for fn in localpath.iterdir():
-        if fn.name == "favicon.ico":
-            icons["favicon"] = path / fn.name
-            _LOGGER.info("Found favicon: %s", icons["favicon"])
+    try:
+        for fn in localpath.iterdir():
+            if fn.name == "favicon.ico":
+                icons["favicon"] = path / fn.name
+                _LOGGER.info("Found favicon: %s", icons["favicon"])
 
-        if re.search(RE_APPLE, fn.name):
-            icons["apple"] = path / fn.name
-            _LOGGER.info("Found apple icon: %s", icons["apple"])
+            if re.search(RE_APPLE, fn.name):
+                icons["apple"] = path / fn.name
+                _LOGGER.info("Found apple icon: %s", icons["apple"])
 
-        icon = re.search(RE_ICON, fn.name)
-        if icon:
-            manifest.append(
-                {
-                    "src": path / fn.name,
-                    "sizes": icon.group(1),
-                    "type": "image/png",
-                }
-            )
-            _LOGGER.info("Found icon: %s", path / fn.name)
+            icon = re.search(RE_ICON, fn.name)
+            if icon:
+                manifest.append(
+                    {
+                        "src": path / fn.name,
+                        "sizes": icon.group(1),
+                        "type": "image/png",
+                    }
+                )
+                _LOGGER.info("Found icon: %s", path / fn.name)
+    except OSError as err:
+        _LOGGER.warning(
+            "Unable to read favicon icon directory %s; check that it exists and is readable: %s",
+            localpath,
+            err,
+        )
+        return {}
 
     if manifest:
         icons["manifest"] = manifest
@@ -311,9 +331,13 @@ def remove_hooks(hass: HomeAssistant) -> bool:
     Returns:
         bool: Whether the original frontend was restored.
     """
-    data = hass.data[DOMAIN]
+    data = hass.data.get(DOMAIN)
+    if not data or "resolve" not in data or "manifest_icons" not in data:
+        return True
     frontend.IndexView.resolve = data["resolve"]  # type: ignore[method-assign]
     frontend.add_manifest_json_key("icons", data["manifest_icons"].copy())
     frontend.add_manifest_json_key("name", "Home Assistant")
     frontend.add_manifest_json_key("short_name", "Assistant")
+    for key in CONF_KEYS:
+        data.pop(key, None)
     return True
