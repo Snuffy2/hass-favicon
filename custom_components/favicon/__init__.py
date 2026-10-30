@@ -194,9 +194,7 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
             text = text.replace("/static/icons/favicon-apple-180x180.png", str(icons["apple"]))
         if title:
             title_json = json.dumps(title).replace("<", r"\u003c")
-            text = text.replace(
-                "<title>Home Assistant</title>", f"<title>{escape(title)}</title>"
-            )
+            text = text.replace("<title>Home Assistant</title>", f"<title>{escape(title)}</title>")
             text = text.replace(
                 "<body>",
                 f"""
