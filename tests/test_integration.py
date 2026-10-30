@@ -1,33 +1,15 @@
-"""Exercise config-entry and YAML integration with the real frontend."""
-
-import json
+"""Exercise config-entry integration with the real frontend."""
 
 from homeassistant.components import frontend
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
-from homeassistant.setup import async_setup_component
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.favicon.const import CONF_ICON_COLOR, CONF_ICON_PATH, CONF_TITLE, DOMAIN
 
 pytestmark = pytest.mark.integration
-
-
-async def test_yaml_customizes_frontend(favicon_frontend: HomeAssistant) -> None:
-    """Apply documented YAML settings through Home Assistant component setup.
-
-    Args:
-        favicon_frontend (HomeAssistant): Real frontend with local icon files.
-    """
-    hass = favicon_frontend
-    settings = {CONF_TITLE: "YAML home", CONF_ICON_PATH: "/local/favicons/"}
-    assert await async_setup_component(hass, DOMAIN, {DOMAIN: settings})
-    assert frontend.MANIFEST_JSON["name"] == "YAML home"
-    assert json.loads(frontend.MANIFEST_JSON.json)["icons"] == [
-        {"src": "/local/favicons/favicon-192x192.png", "sizes": "192x192", "type": "image/png"}
-    ]
 
 
 async def test_config_entry_options_and_removal(favicon_frontend: HomeAssistant) -> None:

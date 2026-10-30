@@ -1,12 +1,13 @@
 """Initialize hass-favicon."""
 
-from collections.abc import Callable, MutableMapping
+from collections.abc import MutableMapping
 from html import escape
 import json
 import logging
 from pathlib import Path
 import re
 from typing import Any
+from urllib.parse import quote
 
 from aiohttp import web
 from aiohttp.web_urldispatcher import ResourceRoute, UrlMappingMatchInfo
@@ -15,18 +16,20 @@ from homeassistant.config_entries import ConfigEntry, ConfigType
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 
-from .const import CONF_ICON_COLOR, CONF_ICON_PATH, CONF_KEYS, CONF_TITLE, DOMAIN
+from .const import CONF_ICON_COLOR, CONF_ICON_PATH, CONF_TITLE, DOMAIN
 
 _LOGGER: logging.Logger = logging.getLogger(__name__)
+_APPLY_GENERATION = "_apply_generation"
+_ACTIVE_ENTRY_LIFETIME = "_active_entry_lifetime"
 
 RE_APPLE = r"^favicon-apple-"
 RE_ICON = r"^favicon-(\d+x\d+)\..+"
 
-CONFIG_SCHEMA: Callable[[dict], dict] = cv.empty_config_schema(DOMAIN)
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Initialize hass-favicon and apply YAML settings when present.
+    """Initialize shared frontend state for config-entry setup.
 
     Args:
         hass (HomeAssistant): Home Assistant instance.
@@ -42,17 +45,14 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         hass.data[DOMAIN]["resolve"] = frontend.IndexView.resolve
     if not hass.data[DOMAIN].get("manifest_icons"):
         hass.data[DOMAIN]["manifest_icons"] = frontend.MANIFEST_JSON["icons"].copy()
+    if "manifest_names" not in hass.data[DOMAIN]:
+        hass.data[DOMAIN]["manifest_names"] = {
+            key: frontend.MANIFEST_JSON[key] for key in ("name", "short_name")
+        }
     _LOGGER.debug("[async_setup] resolve: %s", hass.data[DOMAIN]["resolve"])
     _LOGGER.debug("[async_setup] manifest_icons: %s", hass.data[DOMAIN]["manifest_icons"])
 
-    conf = config.get(DOMAIN)
-    if not conf:
-        return True
-    for key in CONF_KEYS:
-        if key in hass.data[DOMAIN]:
-            del hass.data[DOMAIN][key]
-    hass.data[DOMAIN].update(conf)
-    return await apply_hooks(hass, dict(conf))
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -68,8 +68,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.debug("[async_setup_entry] entry.data: %s", entry.data)
     if not hass.data.get(DOMAIN):
         hass.data.setdefault(DOMAIN, {})
-    entry.async_on_unload(entry.add_update_listener(_update_listener))
-    await _update_listener(hass, entry)
+    entry_token = object()
+    hass.data[DOMAIN][_ACTIVE_ENTRY_LIFETIME] = entry_token
+
+    async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
+        await _update_listener(hass, config_entry, entry_token)
+
+    entry.async_on_unload(entry.add_update_listener(update_listener))
+    await update_listener(hass, entry)
     return True
 
 
@@ -96,25 +102,26 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         bool: Whether unloading succeeded.
     """
     _LOGGER.info("Unloading: %s", entry.data)
-    return True
+    return remove_hooks(hass)
 
 
-async def _update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
+async def _update_listener(
+    hass: HomeAssistant, config_entry: ConfigEntry, entry_token: object
+) -> None:
     """Apply updated config-entry settings.
 
     Args:
         hass (HomeAssistant): Home Assistant instance.
         config_entry (ConfigEntry): Entry containing the updated settings.
+        entry_token (object): Token for the active config-entry lifetime.
     """
-    conf = config_entry.options
-    for key in CONF_KEYS:
-        if key in hass.data[DOMAIN]:
-            del hass.data[DOMAIN][key]
-    hass.data[DOMAIN].update(conf)
+    data = hass.data.get(DOMAIN, {})
+    if data.get(_ACTIVE_ENTRY_LIFETIME) is not entry_token:
+        return
     await apply_hooks(hass, dict(config_entry.data))
 
 
-def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping:
+def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping[str, Any]:
     """Find icons in a local folder.
 
     Args:
@@ -122,10 +129,10 @@ def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping:
         path_str (str): Frontend path under /local/ to search.
 
     Returns:
-        MutableMapping: Discovered icon paths and manifest entries.
+        MutableMapping[str, Any]: Discovered icon paths and manifest entries.
     """
-    icons: MutableMapping = {}
-    manifest: list = []
+    icons: dict[str, Any] = {}
+    manifest: list[dict[str, Any]] = []
     if not path_str or not path_str.startswith("/local/"):
         _LOGGER.error("Invalid Path: %s", path_str)
         return icons
@@ -134,25 +141,41 @@ def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping:
     localpath: Path = Path(hass.config.path(localpath_str))
     _LOGGER.info("Looking for icons in: %s", localpath)
 
-    for fn in localpath.iterdir():
-        if fn.name == "favicon.ico":
-            icons["favicon"] = path / fn.name
-            _LOGGER.info("Found favicon: %s", icons["favicon"])
+    try:
+        for fn in localpath.iterdir():
+            apple = re.search(RE_APPLE, fn.name)
+            icon = re.search(RE_ICON, fn.name)
+            if fn.name != "favicon.ico" and not apple and not icon:
+                continue
+            try:
+                icon_url = quote(str(path / fn.name), safe="/")
+            except UnicodeEncodeError:
+                _LOGGER.warning("Skipping icon with a non-UTF-8 filename: %r", fn.name)
+                continue
+            if fn.name == "favicon.ico":
+                icons["favicon"] = icon_url
+                _LOGGER.info("Found favicon: %s", icons["favicon"])
 
-        if re.search(RE_APPLE, fn.name):
-            icons["apple"] = path / fn.name
-            _LOGGER.info("Found apple icon: %s", icons["apple"])
+            if apple:
+                icons["apple"] = icon_url
+                _LOGGER.info("Found apple icon: %s", icons["apple"])
 
-        icon = re.search(RE_ICON, fn.name)
-        if icon:
-            manifest.append(
-                {
-                    "src": path / fn.name,
-                    "sizes": icon.group(1),
-                    "type": "image/png",
-                }
-            )
-            _LOGGER.info("Found icon: %s", path / fn.name)
+            if icon:
+                manifest.append(
+                    {
+                        "src": icon_url,
+                        "sizes": icon.group(1),
+                        "type": "image/png",
+                    }
+                )
+                _LOGGER.info("Found icon: %s", path / fn.name)
+    except (OSError, ValueError) as err:
+        _LOGGER.warning(
+            "Unable to read favicon icon directory %s; check that it exists and is readable: %s",
+            localpath,
+            err,
+        )
+        return {}
 
     if manifest:
         icons["manifest"] = manifest
@@ -170,9 +193,14 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
     Returns:
         bool: Whether the customizations were applied.
     """
+    data = hass.data.setdefault(DOMAIN, {})
+    generation: int = data.get(_APPLY_GENERATION, 0) + 1
+    data[_APPLY_GENERATION] = generation
     icons = await hass.loop.run_in_executor(
         None, find_icons, hass, config_data.get(CONF_ICON_PATH, None)
     )
+    if hass.data.get(DOMAIN, {}).get(_APPLY_GENERATION) != generation:
+        return True
     _LOGGER.debug("[apply_hooks] icons: %s", icons)
     title = config_data.get(CONF_TITLE, None)
     launch_icon_color = config_data.get(CONF_ICON_COLOR, None)
@@ -223,6 +251,7 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
             )
 
         if launch_icon_color:
+            escaped_color = escape(launch_icon_color)
             # Regex to match hex color codes (e.g., #18bcf2, #123ABC)
             hex_color_pattern = r"#(?:[0-9a-fA-F]{6})"
 
@@ -230,12 +259,12 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
                 r'(<link rel="mask-icon" href="/static/icons/mask-icon\.svg" color=")'
                 + hex_color_pattern
                 + r'(">)',
-                rf"\1{launch_icon_color}\2",
+                lambda match: f"{match[1]}{escaped_color}{match[2]}",
                 text,
             )
             text = re.sub(
                 rf'(<path fill="){hex_color_pattern}(")',
-                rf"\1{launch_icon_color}\2",
+                lambda match: f"{match[1]}{escaped_color}{match[2]}",
                 text,
                 count=1,  # Only replace the first occurrence
             )
@@ -296,8 +325,8 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
         frontend.add_manifest_json_key("name", title)
         frontend.add_manifest_json_key("short_name", title)
     else:
-        frontend.add_manifest_json_key("name", "Home Assistant")
-        frontend.add_manifest_json_key("short_name", "Assistant")
+        for key, value in data["manifest_names"].items():
+            frontend.add_manifest_json_key(key, value)
 
     return True
 
@@ -311,9 +340,15 @@ def remove_hooks(hass: HomeAssistant) -> bool:
     Returns:
         bool: Whether the original frontend was restored.
     """
-    data = hass.data[DOMAIN]
+    data = hass.data.get(DOMAIN)
+    if not data:
+        return True
+    data[_APPLY_GENERATION] = data.get(_APPLY_GENERATION, 0) + 1
+    data.pop(_ACTIVE_ENTRY_LIFETIME, None)
+    if "resolve" not in data or "manifest_icons" not in data:
+        return True
     frontend.IndexView.resolve = data["resolve"]  # type: ignore[method-assign]
     frontend.add_manifest_json_key("icons", data["manifest_icons"].copy())
-    frontend.add_manifest_json_key("name", "Home Assistant")
-    frontend.add_manifest_json_key("short_name", "Assistant")
+    for key, value in data["manifest_names"].items():
+        frontend.add_manifest_json_key(key, value)
     return True

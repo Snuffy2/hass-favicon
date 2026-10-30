@@ -37,7 +37,7 @@ On Linux, use `./.venv/bin/python -m playwright install --with-deps chromium`
 to install Chromium's system libraries too. The tests use an isolated temporary Home Assistant
 configuration and generated icon files; no running Home Assistant is required.
 
-The suite includes integration tests for YAML setup, configuration, options,
+The suite includes integration tests for configuration, options,
 validation and removal; end-to-end HTTP tests for the configuration API, page,
 manifest and icon downloads; and Chromium acceptance tests for the displayed
 title, icon metadata, sidebar title, Settings navigation and page refresh. The
