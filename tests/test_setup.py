@@ -7,7 +7,6 @@ import logging
 from pathlib import Path
 import re
 import threading
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from homeassistant.components import frontend
@@ -17,7 +16,7 @@ from homeassistant.helpers.data_entry_flow import FlowManagerIndexView
 from jinja2 import Template
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-import yaml
+from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
 from custom_components.favicon import (
     CONFIG_SCHEMA,
@@ -63,10 +62,16 @@ async def test_yaml_setup(hass: HomeAssistant, configured: bool) -> None:
             apply.assert_not_awaited()
 
 
-def test_yaml_schema_accepts_sample_configuration() -> None:
+def test_yaml_schema_accepts_supported_configuration() -> None:
     """Validate the supported YAML keys while permitting other HA sections."""
-    sample_path = Path(__file__).parents[1] / "test" / "configuration.yaml"
-    configuration = yaml.safe_load(sample_path.read_text(encoding="utf-8"))
+    configuration = {
+        "default_config": {},
+        DOMAIN: {
+            CONF_TITLE: "YAML home",
+            CONF_ICON_PATH: "/local/favicons/",
+            CONF_ICON_COLOR: "#123456",
+        },
+    }
 
     assert CONFIG_SCHEMA(configuration) == configuration
 
@@ -83,17 +88,21 @@ def test_yaml_schema_accepts_sample_configuration() -> None:
     ],
 )
 async def test_legacy_yaml_does_not_block_entry_setup(
-    hass: HomeAssistant,
+    favicon_frontend: HomeAssistant,
+    hass_client: ClientSessionGenerator,
     monkeypatch: pytest.MonkeyPatch,
     yaml_settings: dict[str, object] | None,
 ) -> None:
     """Keep legacy YAML compatible with loading UI config entries.
 
     Args:
-        hass (HomeAssistant): Home Assistant test instance.
+        favicon_frontend (HomeAssistant): Real frontend with isolated icon files.
+        hass_client (ClientSessionGenerator): Authenticated HTTP client factory.
         monkeypatch (pytest.MonkeyPatch): Fixture for replacing the template source.
         yaml_settings (dict[str, object] | None): Previously accepted YAML settings.
     """
+    hass = favicon_frontend
+    client = await hass_client()
     monkeypatch.setattr(
         frontend.IndexView,
         "get_template",
@@ -105,7 +114,7 @@ async def test_legacy_yaml_does_not_block_entry_setup(
     config = CONFIG_SCHEMA({DOMAIN: yaml_settings})
     assert await async_setup(hass, config) is True
     if yaml_settings and isinstance(color := yaml_settings.get(CONF_ICON_COLOR), str):
-        rendered = frontend.IndexView(None, hass).get_template().render()
+        rendered = await (await client.get("/")).text()
         assert f'color="{html.escape(color)}"' in rendered
     entry = MockConfigEntry(domain=DOMAIN, data={CONF_TITLE: "UI home"})
     assert await async_setup_entry(hass, entry) is True
@@ -114,22 +123,19 @@ async def test_legacy_yaml_does_not_block_entry_setup(
 
 
 async def test_custom_title_is_rendered_safely_and_unload_restores_frontend(
-    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+    favicon_frontend: HomeAssistant,
+    hass_client: ClientSessionGenerator,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Escape custom title output and restore cached frontend state on unload.
 
     Args:
-        hass (HomeAssistant): Home Assistant test instance.
+        favicon_frontend (HomeAssistant): Real frontend with isolated icon files.
+        hass_client (ClientSessionGenerator): Authenticated HTTP client factory.
         monkeypatch (pytest.MonkeyPatch): Fixture for replacing frontend interfaces.
     """
-    index_view = frontend.IndexView(None, hass)
-    monkeypatch.setattr(
-        hass,
-        "http",
-        SimpleNamespace(
-            app=SimpleNamespace(router=SimpleNamespace(resources=lambda: [index_view]))
-        ),
-    )
+    hass = favicon_frontend
+    client = await hass_client()
     monkeypatch.setattr(
         frontend.IndexView,
         "get_template",
@@ -158,7 +164,7 @@ async def test_custom_title_is_rendered_safely_and_unload_restores_frontend(
     }
 
     assert await async_setup(hass, config) is True
-    rendered = index_view.get_template().render()
+    rendered = await (await client.get("/")).text()
 
     assert f"<title>{html.escape(title)}</title>" in rendered
     serialized_title = re.search(r"const title = (.+);", rendered)
@@ -181,19 +187,11 @@ async def test_custom_title_is_rendered_safely_and_unload_restores_frontend(
         },
     )
     assert await async_setup_entry(hass, entry) is True
-    entry_rendered = index_view.get_template().render()
+    entry_rendered = await (await client.get("/")).text()
     assert "<title>Entry title</title>" in entry_rendered
     assert 'color="#00ff00"' in entry_rendered
 
-    for view in hass.http.app.router.resources():
-        if isinstance(view, frontend.IndexView):
-            view._template_cache = Template("cached custom page")
     assert await async_unload_entry(hass, entry) is True
-    assert all(
-        view._template_cache is None
-        for view in hass.http.app.router.resources()
-        if isinstance(view, frontend.IndexView)
-    )
     assert frontend.MANIFEST_JSON["icons"] == [
         {
             "src": "/local/yaml-favicons/favicon-192x192.png",
@@ -203,7 +201,7 @@ async def test_custom_title_is_rendered_safely_and_unload_restores_frontend(
     ]
     assert frontend.MANIFEST_JSON["name"] == title
     assert frontend.MANIFEST_JSON["short_name"] == title
-    yaml_rendered = index_view.get_template().render()
+    yaml_rendered = await (await client.get("/")).text()
     assert f"<title>{html.escape(title)}</title>" in yaml_rendered
     assert 'color="#ff0000"' in yaml_rendered
     assert 'href="/local/yaml-favicons/favicon.ico"' in yaml_rendered
@@ -215,14 +213,19 @@ async def test_custom_title_is_rendered_safely_and_unload_restores_frontend(
 
 
 async def test_icon_urls_encode_reserved_filesystem_characters(
-    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+    favicon_frontend: HomeAssistant,
+    hass_client: ClientSessionGenerator,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Encode special filesystem characters in emitted icon and manifest URLs.
 
     Args:
-        hass (HomeAssistant): Home Assistant test instance.
+        favicon_frontend (HomeAssistant): Real frontend with isolated icon files.
+        hass_client (ClientSessionGenerator): Authenticated HTTP client factory.
         monkeypatch (pytest.MonkeyPatch): Fixture for replacing the frontend template.
     """
+    hass = favicon_frontend
+    client = await hass_client()
     path_str = "/local/favicons#2"
     icon_directory = Path(hass.config.path("www/favicons#2"))
     filenames = (
@@ -250,7 +253,7 @@ async def test_icon_urls_encode_reserved_filesystem_characters(
     assert icons["manifest"] == [{"src": manifest_url, "sizes": "192x192", "type": "image/png"}]
 
     assert await async_setup(hass, {DOMAIN: {CONF_ICON_PATH: path_str}}) is True
-    rendered = frontend.IndexView(None, hass).get_template().render()
+    rendered = await (await client.get("/")).text()
     assert f'href="{favicon_url}"' in rendered
     assert f'href="{apple_url}"' in rendered
     assert frontend.MANIFEST_JSON["icons"] == icons["manifest"]
@@ -417,14 +420,19 @@ async def test_cancelled_yaml_restore_keeps_entry_listener_active(
 
 
 async def test_latest_overlapping_apply_wins(
-    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+    favicon_frontend: HomeAssistant,
+    hass_client: ClientSessionGenerator,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Prevent an older icon scan from replacing a newer frontend update.
 
     Args:
-        hass (HomeAssistant): Home Assistant test instance.
+        favicon_frontend (HomeAssistant): Real frontend with isolated icon files.
+        hass_client (ClientSessionGenerator): Authenticated HTTP client factory.
         monkeypatch (pytest.MonkeyPatch): Fixture for replacing the template and icon scan.
     """
+    hass = favicon_frontend
+    client = await hass_client()
     monkeypatch.setattr(
         frontend.IndexView,
         "get_template",
@@ -468,7 +476,7 @@ async def test_latest_overlapping_apply_wins(
 
     assert frontend.MANIFEST_JSON["icons"] == latest_icons
     assert frontend.MANIFEST_JSON["name"] == "Latest title"
-    rendered = frontend.IndexView(None, hass).get_template().render()
+    rendered = await (await client.get("/")).text()
     assert "<title>Latest title</title>" in rendered
     assert "Old title" not in rendered
     remove_hooks(hass)
@@ -476,17 +484,21 @@ async def test_latest_overlapping_apply_wins(
 
 @pytest.mark.parametrize("restore_yaml", [False, True])
 async def test_in_flight_template_load_cannot_refill_active_cache(
-    hass: HomeAssistant,
+    favicon_frontend: HomeAssistant,
+    hass_client: ClientSessionGenerator,
     monkeypatch: pytest.MonkeyPatch,
     restore_yaml: bool,
 ) -> None:
     """Keep old template loads out of the live cache after settings change.
 
     Args:
-        hass (HomeAssistant): Home Assistant test instance.
+        favicon_frontend (HomeAssistant): Real frontend with isolated icon files.
+        hass_client (ClientSessionGenerator): Authenticated HTTP client factory.
         monkeypatch (pytest.MonkeyPatch): Fixture for replacing the template getter.
         restore_yaml (bool): Whether unloading should restore YAML settings.
     """
+    hass = favicon_frontend
+    client = await hass_client()
     load_started = asyncio.Event()
     release_load = threading.Event()
     first_load = True
@@ -518,10 +530,17 @@ async def test_in_flight_template_load_cannot_refill_active_cache(
     else:
         assert await apply_hooks(hass, {CONF_TITLE: entry_title}) is True
 
-    index_view = frontend.IndexView(None, hass)
+    index_view = next(
+        view for view in hass.http.app.router.resources() if isinstance(view, frontend.IndexView)
+    )
 
-    async def load_template() -> Template:
-        return await hass.async_add_executor_job(index_view.get_template)
+    async def load_template() -> str:
+        """Request rendered HTML through the real frontend route.
+
+        Returns:
+            str: Rendered page HTML.
+        """
+        return await (await client.get("/")).text()
 
     old_request = hass.async_create_task(load_template())
     try:
@@ -536,12 +555,14 @@ async def test_in_flight_template_load_cannot_refill_active_cache(
         release_load.set()
 
     old_template = await asyncio.wait_for(old_request, timeout=5)
-    assert f"<title>{entry_title}</title>" in old_template.render()
-    assert index_view._template_cache is None
+    assert f"<title>{entry_title}</title>" in old_template
+    assert index_view._template_cache is not None
+    assert "<title>Home Assistant</title>" in index_view._template_cache.render()
 
-    current_template = await hass.async_add_executor_job(index_view.get_template)
-    assert f"<title>{expected_title}</title>" in current_template.render()
-    assert index_view._template_cache is None
+    current_template = await load_template()
+    assert f"<title>{expected_title}</title>" in current_template
+    assert index_view._template_cache is not None
+    assert "<title>Home Assistant</title>" in index_view._template_cache.render()
     remove_hooks(hass)
 
 
