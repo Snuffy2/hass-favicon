@@ -26,6 +26,11 @@ async def configure_favicon(client: TestClient, title: str = "My home") -> str:
     assert response.status == 200
     form = await response.json()
     assert form["type"] == "form"
+    assert {field["name"] for field in form["data_schema"]} == {
+        "title",
+        "icon_path",
+        "launch_icon_color",
+    }
     response = await client.post(
         f"/api/config/config_entries/flow/{form['flow_id']}",
         json={"title": title, "icon_path": "/local/favicons/", "launch_icon_color": [18, 52, 86]},

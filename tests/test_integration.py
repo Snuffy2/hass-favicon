@@ -40,6 +40,13 @@ async def test_config_entry_options_and_removal(favicon_frontend: HomeAssistant)
 
     options = await hass.config_entries.options.async_init(entry.entry_id)
     assert options["type"] is FlowResultType.FORM
+    schema = options["data_schema"]
+    assert schema is not None
+    assert schema({}) == {
+        CONF_TITLE: "First home",
+        CONF_ICON_PATH: "/local/favicons/",
+        CONF_ICON_COLOR: [18, 52, 86],
+    }
     changed = await hass.config_entries.options.async_configure(
         options["flow_id"],
         {
@@ -55,6 +62,7 @@ async def test_config_entry_options_and_removal(favicon_frontend: HomeAssistant)
     assert entry.runtime_data.active
     assert entry.data[CONF_TITLE] == "Updated home"
     assert entry.data[CONF_ICON_COLOR] == "#ff0000"
+    assert entry.options == {}
     assert entry.state is ConfigEntryState.LOADED
     assert frontend.MANIFEST_JSON["short_name"] == "Updated home"
 

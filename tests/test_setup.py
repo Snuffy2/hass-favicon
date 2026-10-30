@@ -14,8 +14,6 @@ from aiohttp.test_utils import make_mocked_request
 from aiohttp.web_urldispatcher import SystemRoute, UrlMappingMatchInfo
 from homeassistant.components import frontend
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResultType
-from homeassistant.helpers.data_entry_flow import FlowManagerIndexView
 from jinja2 import Template
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -29,7 +27,6 @@ from custom_components.favicon import (
     find_icons,
     remove_hooks,
 )
-from custom_components.favicon.config_flow import FaviconConfigFlow
 from custom_components.favicon.const import CONF_ICON_COLOR, CONF_ICON_PATH, CONF_TITLE, DOMAIN
 
 
@@ -186,27 +183,6 @@ def test_malformed_icon_filename_does_not_block_valid_icons(
         record.name == "custom_components.favicon" and record.levelno == logging.WARNING
         for record in caplog.records
     )
-
-
-async def test_entry_unload_restores_original_frontend(hass: HomeAssistant) -> None:
-    """Restore the original frontend when a config entry unloads.
-
-    Args:
-        hass (HomeAssistant): Home Assistant test instance.
-    """
-    original_manifest_icons = frontend.MANIFEST_JSON["icons"].copy()
-    original_names = {key: frontend.MANIFEST_JSON[key] for key in ("name", "short_name")}
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={CONF_TITLE: "Entry only", CONF_ICON_PATH: "/local/missing-icons/"},
-    )
-    with patch("custom_components.favicon.apply_hooks", autospec=True, return_value=True):
-        assert await async_setup_entry(hass, entry) is True
-    assert await async_unload_entry(hass, entry) is True
-    assert frontend.MANIFEST_JSON["icons"] == original_manifest_icons
-    assert {key: frontend.MANIFEST_JSON[key] for key in original_names} == original_names
-    assert await async_remove_entry(hass, entry) is True
-    assert {key: frontend.MANIFEST_JSON[key] for key in original_names} == original_names
 
 
 async def test_remove_entry_without_runtime_data_is_safe(hass: HomeAssistant) -> None:
@@ -549,97 +525,24 @@ def test_unreadable_icon_directory_warns_and_continues(
     )
 
 
-async def test_entry_setup_and_update(hass: HomeAssistant) -> None:
-    """Return setup success while the registered update callback returns None.
-
-    Args:
-        hass (HomeAssistant): Home Assistant test instance.
-    """
-    entry = MockConfigEntry(domain=DOMAIN, data={CONF_TITLE: "Test home"})
-    entry.add_to_hass(hass)
-    with patch("custom_components.favicon.apply_hooks", autospec=True, return_value=True) as apply:
-        assert await async_setup_entry(hass, entry) is True
-        apply.assert_awaited_once_with(hass, entry, dict(entry.data))
-        listener = entry.update_listeners[0]
-        assert await listener(hass, entry) is None
-
-        updated_settings = {CONF_TITLE: "Updated home"}
-        apply.reset_mock()
-        assert hass.config_entries.async_update_entry(entry, data=updated_settings)
-        await hass.async_block_till_done()
-        apply.assert_awaited_once_with(hass, entry, updated_settings)
-
-
-async def test_user_form(hass: HomeAssistant) -> None:
-    """Return a settings form whose schema accepts frontend selector values.
-
-    Args:
-        hass (HomeAssistant): Home Assistant test instance.
-    """
-    flow = FaviconConfigFlow()
-    flow.hass = hass
-    result = await flow.async_step_user()
-    assert result["type"] is FlowResultType.FORM
-    settings = {
-        CONF_TITLE: "Test home",
-        CONF_ICON_PATH: "/local/favicons/",
-        CONF_ICON_COLOR: [255, 0, 0],
-    }
-    serialized = FlowManagerIndexView(hass.config_entries.flow)._prepare_result_json(result)
-    assert {field["name"] for field in serialized["data_schema"]} == set(settings)
-    schema = result["data_schema"]
-    assert schema is not None
-    assert schema(settings) == settings
-
-    result = await flow.async_step_user(settings)
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"][CONF_ICON_COLOR] == "#ff0000"
-
-
-async def test_options_flow(hass: HomeAssistant, enable_custom_integrations: None) -> None:
-    """Open and save settings through HA's options flow manager.
-
-    Args:
-        hass (HomeAssistant): Home Assistant test instance.
-        enable_custom_integrations (None): Enable loading the integration flow.
-    """
-    settings = {
-        CONF_TITLE: "Test Home Assistant",
-        CONF_ICON_PATH: "/local/favicons/",
-        CONF_ICON_COLOR: "#18bcf2",
-    }
-    entry = MockConfigEntry(domain=DOMAIN, data=settings)
-    entry.add_to_hass(hass)
-    with patch("homeassistant.config_entries.async_process_deps_reqs"):
-        result = await hass.config_entries.options.async_init(entry.entry_id)
-    assert result["type"] is FlowResultType.FORM
-    schema = result["data_schema"]
-    assert schema is not None
-    assert schema({})[CONF_ICON_COLOR] == [24, 188, 242]
-    updated = {**settings, CONF_TITLE: "Updated Home Assistant", CONF_ICON_COLOR: [255, 0, 0]}
-    with patch.object(hass.config_entries, "async_reload", return_value=True) as reload_entry:
-        result = await hass.config_entries.options.async_configure(result["flow_id"], updated)
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert entry.data == {**updated, CONF_ICON_COLOR: "#ff0000"}
-    assert entry.options == {}
-    reload_entry.assert_awaited_once_with(entry.entry_id)
-
-
 async def test_update_listener_cleanup(hass: HomeAssistant) -> None:
-    """Remove update listeners on unload so reloads do not accumulate callbacks.
+    """Apply entry updates while loaded and leave branding restored after unload.
 
     Args:
         hass (HomeAssistant): Home Assistant test instance.
     """
+    original_name = frontend.MANIFEST_JSON["name"]
     entry = MockConfigEntry(domain=DOMAIN, data={CONF_TITLE: "Test home"})
     entry.add_to_hass(hass)
-    with patch("custom_components.favicon.apply_hooks", autospec=True, return_value=True) as apply:
-        for _ in range(2):
-            assert await async_setup_entry(hass, entry)
-            assert len(entry.update_listeners) == 1
-            await entry._async_process_on_unload(hass)
-            assert not entry.update_listeners
-        apply.reset_mock()
-        hass.config_entries.async_update_entry(entry, data={CONF_TITLE: "Unloaded"})
+    for title in ("First update", "Second update"):
+        assert await async_setup_entry(hass, entry)
+        assert hass.config_entries.async_update_entry(entry, data={CONF_TITLE: title})
         await hass.async_block_till_done()
-        apply.assert_not_awaited()
+        assert frontend.MANIFEST_JSON["name"] == title
+        assert await async_unload_entry(hass, entry)
+        await entry._async_process_on_unload(hass)
+        assert frontend.MANIFEST_JSON["name"] == original_name
+
+    hass.config_entries.async_update_entry(entry, data={CONF_TITLE: "Unloaded"})
+    await hass.async_block_till_done()
+    assert frontend.MANIFEST_JSON["name"] == original_name
