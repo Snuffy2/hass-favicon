@@ -10,3 +10,5 @@ CONF_ICON_COLOR = "launch_icon_color"
 DEFAULT_TITLE = "Home Assistant"
 DEFAULT_ICON_PATH = "/local/favicons/"
 DEFAULT_ICON_COLOR = "#18BCF2"
+
+LAUNCH_LOGO_URL = "/static/images/home-assistant-logo-loading.svg"

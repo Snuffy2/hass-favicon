@@ -5,6 +5,7 @@ import html
 import logging
 from pathlib import Path
 import threading
+from types import SimpleNamespace
 
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
@@ -24,7 +25,13 @@ from custom_components.favicon import (
     find_icons,
     remove_hooks,
 )
-from custom_components.favicon.const import CONF_ICON_COLOR, CONF_ICON_PATH, CONF_TITLE, DOMAIN
+from custom_components.favicon.const import (
+    CONF_ICON_COLOR,
+    CONF_ICON_PATH,
+    CONF_TITLE,
+    DOMAIN,
+    LAUNCH_LOGO_URL,
+)
 
 
 def _create_icon_files(directory: Path, filenames: tuple[str, ...]) -> None:
@@ -502,6 +509,44 @@ async def test_development_frontend_serves_fresh_templates(
     assert first_page == "<title>Template 1</title>"
     assert second_page == "<title>Template 2</title>"
     remove_hooks(entry)
+
+
+@pytest.mark.parametrize("logo", [None, "<svg></svg>"], ids=["missing", "without-fill"])
+async def test_unusable_launch_logo_keeps_frontend_logo(
+    favicon_frontend: HomeAssistant,
+    hass_client: ClientSessionGenerator,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    logo: str | None,
+) -> None:
+    """Serve the original launch logo when the bundled SVG cannot be recolored.
+
+    Args:
+        favicon_frontend (HomeAssistant): Real frontend with isolated icon files.
+        hass_client (ClientSessionGenerator): Authenticated HTTP client factory.
+        monkeypatch (pytest.MonkeyPatch): Fixture for replacing the frontend location.
+        tmp_path (Path): Directory standing in for the frontend package.
+        logo (str | None): Launch logo contents, or None for a missing file.
+    """
+    if logo is not None:
+        logo_path = tmp_path / LAUNCH_LOGO_URL.lstrip("/")
+        logo_path.parent.mkdir(parents=True)
+        logo_path.write_text(logo, encoding="utf-8")
+    monkeypatch.setattr(
+        "custom_components.favicon.hass_frontend", SimpleNamespace(where=lambda: tmp_path)
+    )
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_TITLE: "Lab", CONF_ICON_PATH: "/local/empty/", CONF_ICON_COLOR: "#123456"},
+    )
+    entry.add_to_hass(favicon_frontend)
+    assert await async_setup_entry(favicon_frontend, entry) is True
+
+    rendered = await (await (await hass_client()).get("/")).text()
+
+    assert f'src="{LAUNCH_LOGO_URL}"' in rendered
+    assert 'color="#123456"' in rendered
+    assert await async_unload_entry(favicon_frontend, entry) is True
 
 
 @pytest.mark.parametrize("path", ["/local/../..", "/local/a/../../x/"])

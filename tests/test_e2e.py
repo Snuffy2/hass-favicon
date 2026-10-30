@@ -1,5 +1,7 @@
 """End-to-end HTTP coverage using Home Assistant's real frontend and APIs."""
 
+import base64
+import re
 from unittest.mock import patch
 
 from aiohttp.test_utils import TestClient
@@ -10,6 +12,20 @@ from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 from custom_components.favicon.const import DOMAIN
 
 pytestmark = pytest.mark.e2e
+
+
+def launch_logo_svg(html: str) -> str:
+    """Decode the inline launch-screen logo from a served frontend page.
+
+    Args:
+        html (str): Served frontend HTML.
+
+    Returns:
+        str: Decoded launch logo SVG.
+    """
+    match = re.search(r'<img class="ha-logo" src="data:image/svg\+xml;base64,([^"]+)"', html)
+    assert match is not None
+    return base64.b64decode(match[1]).decode()
 
 
 async def configure_favicon(client: TestClient, title: str = "My home") -> str:
@@ -63,6 +79,7 @@ async def test_configure_and_serve_assets(
     assert "/local/favicons/favicon.ico" in html
     assert "/local/favicons/favicon-apple-180x180.png" in html
     assert 'color="#123456"' in html
+    assert '<path fill="#123456"' in launch_logo_svg(html)
 
     response = await client.get("/manifest.json")
     assert response.status == 200
@@ -145,6 +162,7 @@ async def test_options_and_removal_update_served_page(
     assert "<title>New home</title>" in html
     assert "/static/icons/favicon.ico" in html
     assert 'color="#000000"' in html
+    assert '<path fill="#000000"' in launch_logo_svg(html)
 
     response = await client.delete(f"/api/config/config_entries/entry/{entry_id}")
     assert response.status == 200
