@@ -267,7 +267,10 @@ async def test_entry_unload_restores_defaults_without_yaml(hass: HomeAssistant) 
         hass (HomeAssistant): Home Assistant test instance.
     """
     original_manifest_icons = frontend.MANIFEST_JSON["icons"].copy()
+    original_names = {key: frontend.MANIFEST_JSON[key] for key in ("name", "short_name")}
     await async_setup(hass, {})
+    assert await apply_hooks(hass, {}) is True
+    assert {key: frontend.MANIFEST_JSON[key] for key in original_names} == original_names
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={CONF_TITLE: "Entry only", CONF_ICON_PATH: "/local/missing-icons/"},
@@ -276,10 +279,9 @@ async def test_entry_unload_restores_defaults_without_yaml(hass: HomeAssistant) 
         assert await async_setup_entry(hass, entry) is True
     assert await async_unload_entry(hass, entry) is True
     assert frontend.MANIFEST_JSON["icons"] == original_manifest_icons
-    assert frontend.MANIFEST_JSON["name"] == "Home Assistant"
-    assert frontend.MANIFEST_JSON["short_name"] == "Assistant"
+    assert {key: frontend.MANIFEST_JSON[key] for key in original_names} == original_names
     assert await async_remove_entry(hass, entry) is True
-    assert frontend.MANIFEST_JSON["name"] == "Home Assistant"
+    assert {key: frontend.MANIFEST_JSON[key] for key in original_names} == original_names
 
 
 async def test_entry_unload_unregisters_update_listener(hass: HomeAssistant) -> None:
@@ -319,6 +321,7 @@ async def test_unload_discards_in_flight_entry_icon_scan(
         yaml_configured (bool): Whether unload should restore YAML customizations.
     """
     original_icons = frontend.MANIFEST_JSON["icons"].copy()
+    original_names = {key: frontend.MANIFEST_JSON[key] for key in ("name", "short_name")}
     yaml_config = (
         {CONF_TITLE: "YAML title", CONF_ICON_PATH: "/local/missing-yaml-icons/"}
         if yaml_configured
@@ -362,18 +365,19 @@ async def test_unload_discards_in_flight_entry_icon_scan(
         assert frontend.MANIFEST_JSON["name"] == "YAML title"
         assert frontend.MANIFEST_JSON["short_name"] == "YAML title"
     else:
-        assert frontend.MANIFEST_JSON["name"] == "Home Assistant"
-        assert frontend.MANIFEST_JSON["short_name"] == "Assistant"
+        assert {key: frontend.MANIFEST_JSON[key] for key in original_names} == original_names
 
 
-async def test_cancelled_yaml_restore_keeps_entry_listener_active(
-    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("failure", ["cancelled", "scan_error"])
+async def test_failed_yaml_restore_keeps_entry_listener_active(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
-    """Keep entry hooks and their listener when YAML restoration is canceled.
+    """Keep entry hooks and their listener when YAML restoration cannot complete.
 
     Args:
         hass (HomeAssistant): Home Assistant test instance.
         monkeypatch (pytest.MonkeyPatch): Fixture for delaying YAML icon discovery.
+        failure (str): Whether icon discovery is canceled or raises an encoding error.
     """
     yaml_config = {CONF_TITLE: "YAML title", CONF_ICON_PATH: "/local/yaml-cancel-icons/"}
     assert await async_setup(hass, {DOMAIN: yaml_config}) is True
@@ -395,15 +399,22 @@ async def test_cancelled_yaml_restore_keeps_entry_listener_active(
             if not release_scan.wait(timeout=5):
                 raise TimeoutError("The test did not release the YAML icon scan")
             scan_hass.loop.call_soon_threadsafe(scan_finished.set)
+            if failure == "scan_error":
+                raise UnicodeEncodeError("utf-8", "\udcff", 0, 1, "invalid icon filename")
         return {}
 
     monkeypatch.setattr("custom_components.favicon.find_icons", delayed_yaml_scan)
     unload_task = hass.async_create_task(async_unload_entry(hass, entry))
     try:
         await asyncio.wait_for(scan_started.wait(), timeout=5)
-        unload_task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await unload_task
+        if failure == "cancelled":
+            unload_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await unload_task
+        else:
+            release_scan.set()
+            with pytest.raises(UnicodeEncodeError):
+                await unload_task
     finally:
         release_scan.set()
     await asyncio.wait_for(scan_finished.wait(), timeout=5)

@@ -1,6 +1,5 @@
 """Initialize hass-favicon."""
 
-import asyncio
 from collections.abc import MutableMapping
 from html import escape
 import json
@@ -62,6 +61,10 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         hass.data[DOMAIN]["resolve"] = frontend.IndexView.resolve
     if not hass.data[DOMAIN].get("manifest_icons"):
         hass.data[DOMAIN]["manifest_icons"] = frontend.MANIFEST_JSON["icons"].copy()
+    if "manifest_names" not in hass.data[DOMAIN]:
+        hass.data[DOMAIN]["manifest_names"] = {
+            key: frontend.MANIFEST_JSON[key] for key in ("name", "short_name")
+        }
     _LOGGER.debug("[async_setup] resolve: %s", hass.data[DOMAIN]["resolve"])
     _LOGGER.debug("[async_setup] manifest_icons: %s", hass.data[DOMAIN]["manifest_icons"])
 
@@ -343,8 +346,8 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
         frontend.add_manifest_json_key("name", title)
         frontend.add_manifest_json_key("short_name", title)
     else:
-        frontend.add_manifest_json_key("name", "Home Assistant")
-        frontend.add_manifest_json_key("short_name", "Assistant")
+        for key, value in data["manifest_names"].items():
+            frontend.add_manifest_json_key(key, value)
 
     return True
 
@@ -364,8 +367,8 @@ def remove_hooks(hass: HomeAssistant) -> bool:
     _invalidate_pending_apply(hass)
     frontend.IndexView.resolve = data["resolve"]  # type: ignore[method-assign]
     frontend.add_manifest_json_key("icons", data["manifest_icons"].copy())
-    frontend.add_manifest_json_key("name", "Home Assistant")
-    frontend.add_manifest_json_key("short_name", "Assistant")
+    for key, value in data["manifest_names"].items():
+        frontend.add_manifest_json_key(key, value)
     for key in CONF_KEYS:
         data.pop(key, None)
     return True
@@ -375,13 +378,10 @@ async def _restore_configured_hooks(hass: HomeAssistant) -> bool:
     """Restore YAML customizations after a config entry stops overriding them.
 
     Keep the entry metadata until YAML hook application succeeds. If that await
-    is canceled, the entry listener remains active with its original settings.
+    fails or is canceled, the entry listener remains active with its original settings.
 
     Args:
         hass (HomeAssistant): Home Assistant instance.
-
-    Raises:
-        asyncio.CancelledError: If YAML hook application is canceled before commit.
 
     Returns:
         bool: Whether the configured frontend state was restored.
@@ -391,14 +391,19 @@ async def _restore_configured_hooks(hass: HomeAssistant) -> bool:
     active_entry_lifetime = data.pop(_ACTIVE_ENTRY_LIFETIME, None)
     yaml_config = data.get("yaml_config", {})
     if yaml_config:
+        completed = False
         try:
             applied = await apply_hooks(hass, dict(yaml_config))
-        except asyncio.CancelledError:
+            completed = True
+        finally:
             # The entry hooks are still installed until YAML icon discovery
-            # finishes. Restore their listener lifetime if unload is canceled.
-            if active_entry_lifetime is not None and _ACTIVE_ENTRY_LIFETIME not in data:
+            # finishes. Restore their listener lifetime on any unsuccessful exit.
+            if (
+                not completed
+                and active_entry_lifetime is not None
+                and _ACTIVE_ENTRY_LIFETIME not in data
+            ):
                 data[_ACTIVE_ENTRY_LIFETIME] = active_entry_lifetime
-            raise
         if _ACTIVE_ENTRY_LIFETIME in data:
             return applied
         for key in CONF_KEYS:
