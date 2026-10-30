@@ -34,6 +34,7 @@ async def test_config_entry_options_and_removal(favicon_frontend: HomeAssistant)
     await hass.async_block_till_done()
     entry = result["result"]
     assert entry.state is ConfigEntryState.LOADED
+    original_runtime_data = entry.runtime_data
     assert entry.data[CONF_ICON_COLOR] == "#123456"
     assert frontend.MANIFEST_JSON["name"] == "First home"
 
@@ -49,6 +50,9 @@ async def test_config_entry_options_and_removal(favicon_frontend: HomeAssistant)
     )
     assert changed["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
+    assert entry.runtime_data is not original_runtime_data
+    assert not original_runtime_data.active
+    assert entry.runtime_data.active
     assert entry.data[CONF_TITLE] == "Updated home"
     assert entry.data[CONF_ICON_COLOR] == "#ff0000"
     assert entry.state is ConfigEntryState.LOADED
@@ -56,6 +60,7 @@ async def test_config_entry_options_and_removal(favicon_frontend: HomeAssistant)
 
     assert await hass.config_entries.async_remove(entry.entry_id)
     await hass.async_block_till_done()
+    assert not hasattr(entry, "runtime_data")
     assert not hass.config_entries.async_entries(DOMAIN)
     assert frontend.MANIFEST_JSON["name"] == "Home Assistant"
     assert frontend.MANIFEST_JSON["icons"] == original_icons

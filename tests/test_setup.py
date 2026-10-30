@@ -9,6 +9,9 @@ import re
 import threading
 from unittest.mock import patch
 
+from aiohttp import web
+from aiohttp.test_utils import make_mocked_request
+from aiohttp.web_urldispatcher import SystemRoute, UrlMappingMatchInfo
 from homeassistant.components import frontend
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -21,7 +24,6 @@ from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 from custom_components.favicon import (
     apply_hooks,
     async_remove_entry,
-    async_setup,
     async_setup_entry,
     async_unload_entry,
     find_icons,
@@ -88,7 +90,6 @@ async def test_stored_color_and_title_rendering_and_unload_restores_frontend(
         CONF_ICON_COLOR: stored_color,
     }
 
-    assert await async_setup(hass, {}) is True
     entry = MockConfigEntry(domain=DOMAIN, data=settings)
     entry.add_to_hass(hass)
     assert await async_setup_entry(hass, entry) is True
@@ -159,14 +160,13 @@ async def test_icon_urls_encode_reserved_filesystem_characters(
     assert icons["apple"] == apple_url
     assert icons["manifest"] == [{"src": manifest_url, "sizes": "192x192", "type": "image/png"}]
 
-    assert await async_setup(hass, {}) is True
     entry = MockConfigEntry(domain=DOMAIN, data={CONF_ICON_PATH: path_str})
     assert await async_setup_entry(hass, entry) is True
     rendered = await (await client.get("/")).text()
     assert f'href="{favicon_url}"' in rendered
     assert f'href="{apple_url}"' in rendered
     assert frontend.MANIFEST_JSON["icons"] == icons["manifest"]
-    remove_hooks(hass)
+    remove_hooks(entry)
 
 
 def test_malformed_icon_filename_does_not_block_valid_icons(
@@ -196,9 +196,6 @@ async def test_entry_unload_restores_original_frontend(hass: HomeAssistant) -> N
     """
     original_manifest_icons = frontend.MANIFEST_JSON["icons"].copy()
     original_names = {key: frontend.MANIFEST_JSON[key] for key in ("name", "short_name")}
-    await async_setup(hass, {})
-    assert await apply_hooks(hass, {}) is True
-    assert {key: frontend.MANIFEST_JSON[key] for key in original_names} == original_names
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={CONF_TITLE: "Entry only", CONF_ICON_PATH: "/local/missing-icons/"},
@@ -212,34 +209,12 @@ async def test_entry_unload_restores_original_frontend(hass: HomeAssistant) -> N
     assert {key: frontend.MANIFEST_JSON[key] for key in original_names} == original_names
 
 
-@pytest.mark.parametrize(
-    "saved_state",
-    [
-        pytest.param(None, id="no-domain-data"),
-        pytest.param({}, id="empty-domain-data"),
-        pytest.param(
-            {"manifest_icons": [{"src": "/local/saved-icon.png"}], "manifest_names": {}},
-            id="missing-resolver",
-        ),
-        pytest.param(
-            {"resolve": lambda *_args, **_kwargs: None, "manifest_names": {}},
-            id="missing-manifest-icons",
-        ),
-    ],
-)
-async def test_remove_entry_without_complete_saved_frontend_state_is_safe(
-    hass: HomeAssistant, saved_state: dict[str, object] | None
-) -> None:
-    """Leave frontend state alone when removal has no complete restoration snapshot.
+async def test_remove_entry_without_runtime_data_is_safe(hass: HomeAssistant) -> None:
+    """Leave the frontend alone when removing an entry that was never loaded.
 
     Args:
         hass (HomeAssistant): Home Assistant test instance.
-        saved_state (dict[str, object] | None): Absent, empty, or incomplete saved state.
     """
-    hass.data.pop(DOMAIN, None)
-    if saved_state is not None:
-        hass.data[DOMAIN] = saved_state
-
     original_resolve = frontend.IndexView.resolve
     original_manifest_icons = frontend.MANIFEST_JSON["icons"].copy()
     original_manifest_names = {key: frontend.MANIFEST_JSON[key] for key in ("name", "short_name")}
@@ -253,23 +228,76 @@ async def test_remove_entry_without_complete_saved_frontend_state_is_safe(
     } == original_manifest_names
 
 
-async def test_queued_listener_ignores_unloaded_entry(hass: HomeAssistant) -> None:
+async def test_resolver_preserves_resource_less_route_result(
+    favicon_frontend: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Preserve aiohttp system routes and allowed methods through the installed resolver.
+
+    Args:
+        favicon_frontend (HomeAssistant): Home Assistant instance with a real frontend.
+        monkeypatch (pytest.MonkeyPatch): Fixture for controlling the original resolver.
+    """
+    hass = favicon_frontend
+    route = SystemRoute(web.HTTPNotFound())
+    match_info = UrlMappingMatchInfo({}, route)
+    allowed_methods = {"GET", "HEAD"}
+
+    async def resolve(
+        _view: frontend.IndexView, _request: web.Request
+    ) -> tuple[UrlMappingMatchInfo, set[str]]:
+        """Return a realistic route result without needing an HTTP server request.
+
+        Args:
+            _view (frontend.IndexView): Frontend resource resolving the request.
+            _request (web.Request): Request being resolved.
+
+        Returns:
+            tuple[UrlMappingMatchInfo, set[str]]: System route and allowed methods.
+        """
+        return match_info, allowed_methods
+
+    monkeypatch.setattr(frontend.IndexView, "resolve", resolve)
+    entry = MockConfigEntry(domain=DOMAIN)
+    entry.add_to_hass(hass)
+    assert await async_setup_entry(hass, entry) is True
+    assert frontend.IndexView.resolve is not resolve
+
+    index_view = next(
+        view for view in hass.http.app.router.resources() if isinstance(view, frontend.IndexView)
+    )
+    result, result_allowed_methods = await index_view.resolve(make_mocked_request("GET", "/"))
+
+    assert route.resource is None
+    assert result is match_info
+    assert result_allowed_methods is allowed_methods
+    assert await async_remove_entry(hass, entry) is True
+
+
+@pytest.mark.parametrize("reload_entry", [False, True])
+async def test_queued_listener_ignores_unloaded_entry(
+    hass: HomeAssistant, reload_entry: bool
+) -> None:
     """Ignore a queued callback after its entry has unloaded.
 
     Args:
         hass (HomeAssistant): Home Assistant test instance.
+        reload_entry (bool): Whether to reload before running the old callback.
     """
     entry = MockConfigEntry(domain=DOMAIN, data={CONF_TITLE: "Test home"})
     entry.add_to_hass(hass)
 
-    assert await async_setup(hass, {}) is True
     with patch("custom_components.favicon.apply_hooks", autospec=True, return_value=True) as apply:
         assert await async_setup_entry(hass, entry) is True
         listener = entry.update_listeners[0]
 
         assert await async_unload_entry(hass, entry) is True
+        await entry._async_process_on_unload(hass)
+        if reload_entry:
+            assert await async_setup_entry(hass, entry) is True
+        apply.reset_mock()
         await listener(hass, entry)
-        apply.assert_awaited_once_with(hass, dict(entry.data))
+        apply.assert_not_awaited()
 
     await entry._async_process_on_unload(hass)
 
@@ -286,7 +314,6 @@ async def test_unload_discards_in_flight_entry_icon_scan(
     """
     original_icons = frontend.MANIFEST_JSON["icons"].copy()
     original_names = {key: frontend.MANIFEST_JSON[key] for key in ("name", "short_name")}
-    assert await async_setup(hass, {}) is True
 
     scan_started = asyncio.Event()
     release_scan = threading.Event()
@@ -344,7 +371,8 @@ async def test_latest_overlapping_apply_wins(
             "<html><head><title>Home Assistant</title></head><body></body></html>"
         ),
     )
-    assert await async_setup(hass, {}) is True
+    entry = MockConfigEntry(domain=DOMAIN)
+    assert await async_setup_entry(hass, entry) is True
     old_scan_started = asyncio.Event()
     release_old_scan = threading.Event()
     old_icons = [{"src": "/local/old/favicon-192x192.png", "sizes": "192x192", "type": "image/png"}]
@@ -366,12 +394,14 @@ async def test_latest_overlapping_apply_wins(
 
     monkeypatch.setattr("custom_components.favicon.find_icons", overlapping_scan)
     old_task = hass.async_create_task(
-        apply_hooks(hass, {CONF_TITLE: "Old title", CONF_ICON_PATH: "/local/old/"})
+        apply_hooks(hass, entry, {CONF_TITLE: "Old title", CONF_ICON_PATH: "/local/old/"})
     )
     try:
         await asyncio.wait_for(old_scan_started.wait(), timeout=5)
         assert (
-            await apply_hooks(hass, {CONF_TITLE: "Latest title", CONF_ICON_PATH: "/local/latest/"})
+            await apply_hooks(
+                hass, entry, {CONF_TITLE: "Latest title", CONF_ICON_PATH: "/local/latest/"}
+            )
             is True
         )
     finally:
@@ -383,7 +413,7 @@ async def test_latest_overlapping_apply_wins(
     rendered = await (await client.get("/")).text()
     assert "<title>Latest title</title>" in rendered
     assert "Old title" not in rendered
-    remove_hooks(hass)
+    remove_hooks(entry)
 
 
 @pytest.mark.parametrize("transition", ["update", "unload", "remove"])
@@ -425,7 +455,6 @@ async def test_in_flight_page_load_preserves_current_branding(
         return template
 
     monkeypatch.setattr(frontend.IndexView, "get_template", delayed_template)
-    assert await async_setup(hass, {}) is True
     entry_title = "Entry title"
     entry = MockConfigEntry(domain=DOMAIN, data={CONF_TITLE: entry_title})
     assert await async_setup_entry(hass, entry) is True
@@ -442,7 +471,7 @@ async def test_in_flight_page_load_preserves_current_branding(
     try:
         await asyncio.wait_for(load_started.wait(), timeout=5)
         if transition == "update":
-            assert await apply_hooks(hass, {CONF_TITLE: "New title"}) is True
+            assert await apply_hooks(hass, entry, {CONF_TITLE: "New title"}) is True
             expected_title = "New title"
         else:
             callback = async_unload_entry if transition == "unload" else async_remove_entry
@@ -456,7 +485,7 @@ async def test_in_flight_page_load_preserves_current_branding(
 
     current_template = await load_template()
     assert f"<title>{expected_title}</title>" in current_template
-    remove_hooks(hass)
+    remove_hooks(entry)
 
 
 async def test_development_frontend_serves_fresh_templates(
@@ -481,8 +510,8 @@ async def test_development_frontend_serves_fresh_templates(
         return Template(f"<title>Template {calls}</title>")
 
     monkeypatch.setattr(frontend.IndexView, "get_template", changing_template)
-    assert await async_setup(hass, {}) is True
-    assert await apply_hooks(hass, {}) is True
+    entry = MockConfigEntry(domain=DOMAIN)
+    assert await async_setup_entry(hass, entry) is True
 
     index_view = next(
         view for view in hass.http.app.router.resources() if isinstance(view, frontend.IndexView)
@@ -493,7 +522,7 @@ async def test_development_frontend_serves_fresh_templates(
 
     assert first_page == "<title>Template 1</title>"
     assert second_page == "<title>Template 2</title>"
-    remove_hooks(hass)
+    remove_hooks(entry)
 
 
 @pytest.mark.parametrize(
@@ -530,7 +559,7 @@ async def test_entry_setup_and_update(hass: HomeAssistant) -> None:
     entry.add_to_hass(hass)
     with patch("custom_components.favicon.apply_hooks", autospec=True, return_value=True) as apply:
         assert await async_setup_entry(hass, entry) is True
-        apply.assert_awaited_once_with(hass, dict(entry.data))
+        apply.assert_awaited_once_with(hass, entry, dict(entry.data))
         listener = entry.update_listeners[0]
         assert await listener(hass, entry) is None
 
@@ -538,7 +567,7 @@ async def test_entry_setup_and_update(hass: HomeAssistant) -> None:
         apply.reset_mock()
         assert hass.config_entries.async_update_entry(entry, data=updated_settings)
         await hass.async_block_till_done()
-        apply.assert_awaited_once_with(hass, updated_settings)
+        apply.assert_awaited_once_with(hass, entry, updated_settings)
 
 
 async def test_user_form(hass: HomeAssistant) -> None:

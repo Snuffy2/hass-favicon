@@ -12,10 +12,11 @@ from homeassistant.components import frontend
 from homeassistant.core import HomeAssistant
 from jinja2 import Template
 import pytest
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
-from custom_components.favicon import apply_hooks, async_setup
-from custom_components.favicon.const import CONF_ICON_COLOR, CONF_TITLE
+from custom_components.favicon import async_setup_entry
+from custom_components.favicon.const import CONF_ICON_COLOR, CONF_TITLE, DOMAIN
 
 
 async def test_launch_icon_color_is_rendered(
@@ -39,8 +40,9 @@ async def test_launch_icon_color_is_rendered(
         patch("custom_components.favicon.find_icons", return_value={}),
         patch.object(frontend, "add_manifest_json_key"),
     ):
-        await async_setup(hass, {})
-        await apply_hooks(hass, {CONF_ICON_COLOR: "#ff0000"})
+        await async_setup_entry(
+            hass, MockConfigEntry(domain=DOMAIN, data={CONF_ICON_COLOR: "#ff0000"})
+        )
         client = await hass_client()
         response = await client.get("/")
         assert response.status == 200
@@ -74,8 +76,7 @@ async def test_title_updates_are_stable(
         patch("custom_components.favicon.find_icons", return_value={}),
         patch.object(frontend, "add_manifest_json_key"),
     ):
-        await async_setup(hass, {})
-        await apply_hooks(hass, {CONF_TITLE: title})
+        await async_setup_entry(hass, MockConfigEntry(domain=DOMAIN, data={CONF_TITLE: title}))
         client = await hass_client()
         response = await client.get("/")
         assert response.status == 200

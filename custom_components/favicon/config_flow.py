@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from collections.abc import MutableMapping
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
+from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.core import callback
 from homeassistant.helpers import selector
 import voluptuous as vol
@@ -20,6 +20,9 @@ from .const import (
     DEFAULT_TITLE,
     DOMAIN,
 )
+
+if TYPE_CHECKING:
+    from . import FaviconConfigEntry
 
 _LOGGER: logging.Logger = logging.getLogger(__name__)
 
@@ -173,7 +176,7 @@ class FaviconConfigFlow(ConfigFlow, domain=DOMAIN):
     @staticmethod
     @callback
     def async_get_options_flow(
-        _: ConfigEntry,
+        _: FaviconConfigEntry,
     ) -> FaviconOptionsFlowHandler:
         """Create the options flow for hass-favicon.
 
