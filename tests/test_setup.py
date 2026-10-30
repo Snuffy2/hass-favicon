@@ -324,6 +324,60 @@ async def test_unload_discards_in_flight_entry_icon_scan(
         assert frontend.MANIFEST_JSON["short_name"] == "Assistant"
 
 
+async def test_cancelled_yaml_restore_keeps_entry_listener_active(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep entry hooks and their listener when YAML restoration is canceled.
+
+    Args:
+        hass (HomeAssistant): Home Assistant test instance.
+        monkeypatch (pytest.MonkeyPatch): Fixture for delaying YAML icon discovery.
+    """
+    yaml_config = {CONF_TITLE: "YAML title", CONF_ICON_PATH: "/local/yaml-cancel-icons/"}
+    assert await async_setup(hass, {DOMAIN: yaml_config}) is True
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_TITLE: "Entry title"},
+        options={CONF_TITLE: "Entry title"},
+    )
+    entry.add_to_hass(hass)
+    assert await async_setup_entry(hass, entry) is True
+
+    scan_started = asyncio.Event()
+    scan_finished = asyncio.Event()
+    release_scan = threading.Event()
+
+    def delayed_yaml_scan(scan_hass: HomeAssistant, path_str: str) -> dict[str, object]:
+        if path_str == "/local/yaml-cancel-icons/":
+            scan_hass.loop.call_soon_threadsafe(scan_started.set)
+            if not release_scan.wait(timeout=5):
+                raise TimeoutError("The test did not release the YAML icon scan")
+            scan_hass.loop.call_soon_threadsafe(scan_finished.set)
+        return {}
+
+    monkeypatch.setattr("custom_components.favicon.find_icons", delayed_yaml_scan)
+    unload_task = hass.async_create_task(async_unload_entry(hass, entry))
+    try:
+        await asyncio.wait_for(scan_started.wait(), timeout=5)
+        unload_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await unload_task
+    finally:
+        release_scan.set()
+    await asyncio.wait_for(scan_finished.wait(), timeout=5)
+
+    assert hass.data[DOMAIN][CONF_TITLE] == "Entry title"
+    assert frontend.MANIFEST_JSON["name"] == "Entry title"
+    assert hass.config_entries.async_update_entry(
+        entry,
+        data={CONF_TITLE: "Updated entry title"},
+        options={CONF_TITLE: "Updated entry title"},
+    )
+    await hass.async_block_till_done()
+    assert frontend.MANIFEST_JSON["name"] == "Updated entry title"
+    remove_hooks(hass)
+
+
 async def test_latest_overlapping_apply_wins(
     hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -379,6 +433,107 @@ async def test_latest_overlapping_apply_wins(
     rendered = frontend.IndexView(None, hass).get_template().render()
     assert "<title>Latest title</title>" in rendered
     assert "Old title" not in rendered
+    remove_hooks(hass)
+
+
+@pytest.mark.parametrize("restore_yaml", [False, True])
+async def test_in_flight_template_load_cannot_refill_active_cache(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    restore_yaml: bool,
+) -> None:
+    """Keep old template loads out of the live cache after settings change.
+
+    Args:
+        hass (HomeAssistant): Home Assistant test instance.
+        monkeypatch (pytest.MonkeyPatch): Fixture for replacing the template getter.
+        restore_yaml (bool): Whether unloading should restore YAML settings.
+    """
+    load_started = asyncio.Event()
+    release_load = threading.Event()
+    first_load = True
+    load_lock = threading.Lock()
+    source = "<html><head><title>Home Assistant</title></head><body></body></html>"
+
+    def delayed_template(view: frontend.IndexView) -> Template:
+        nonlocal first_load
+        with load_lock:
+            should_block = first_load
+            first_load = False
+        if should_block:
+            hass.loop.call_soon_threadsafe(load_started.set)
+            if not release_load.wait(timeout=5):
+                raise TimeoutError("The test did not release the template load")
+        template = view._template_cache
+        if template is None:
+            template = Template(source)
+            view._template_cache = template
+        return template
+
+    monkeypatch.setattr(frontend.IndexView, "get_template", delayed_template)
+    yaml_config = {CONF_TITLE: "YAML title"} if restore_yaml else {}
+    assert await async_setup(hass, {DOMAIN: yaml_config} if restore_yaml else {}) is True
+    entry_title = "Entry title" if restore_yaml else "Old title"
+    if restore_yaml:
+        entry = MockConfigEntry(domain=DOMAIN, data={CONF_TITLE: entry_title})
+        assert await async_setup_entry(hass, entry) is True
+    else:
+        assert await apply_hooks(hass, {CONF_TITLE: entry_title}) is True
+
+    index_view = frontend.IndexView(None, hass)
+
+    async def load_template() -> Template:
+        return await hass.async_add_executor_job(index_view.get_template)
+
+    old_request = hass.async_create_task(load_template())
+    try:
+        await asyncio.wait_for(load_started.wait(), timeout=5)
+        if restore_yaml:
+            assert await async_unload_entry(hass, entry) is True
+            expected_title = "YAML title"
+        else:
+            assert await apply_hooks(hass, {CONF_TITLE: "New title"}) is True
+            expected_title = "New title"
+    finally:
+        release_load.set()
+
+    old_template = await asyncio.wait_for(old_request, timeout=5)
+    assert f"<title>{entry_title}</title>" in old_template.render()
+    assert index_view._template_cache is None
+
+    current_template = await hass.async_add_executor_job(index_view.get_template)
+    assert f"<title>{expected_title}</title>" in current_template.render()
+    assert index_view._template_cache is None
+    remove_hooks(hass)
+
+
+async def test_development_frontend_templates_are_not_cached(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep development template reloads visible through the active hook.
+
+    Args:
+        hass (HomeAssistant): Home Assistant test instance.
+        monkeypatch (pytest.MonkeyPatch): Fixture for replacing the template getter.
+    """
+    calls = 0
+
+    def changing_template(_view: frontend.IndexView) -> Template:
+        nonlocal calls
+        calls += 1
+        return Template(f"<title>Template {calls}</title>")
+
+    monkeypatch.setattr(frontend.IndexView, "get_template", changing_template)
+    assert await async_setup(hass, {}) is True
+    assert await apply_hooks(hass, {}) is True
+
+    index_view = frontend.IndexView("/repo", hass)
+    first_template = await hass.async_add_executor_job(index_view.get_template)
+    second_template = await hass.async_add_executor_job(index_view.get_template)
+
+    assert first_template.render() == "<title>Template 1</title>"
+    assert second_template.render() == "<title>Template 2</title>"
+    assert calls == 2
     remove_hooks(hass)
 
 

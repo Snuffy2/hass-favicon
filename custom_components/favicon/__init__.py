@@ -1,6 +1,7 @@
 """Initialize hass-favicon."""
 
-from collections.abc import Callable, MutableMapping
+import asyncio
+from collections.abc import MutableMapping
 from html import escape
 import json
 import logging
@@ -368,21 +369,40 @@ def remove_hooks(hass: HomeAssistant) -> bool:
 async def _restore_configured_hooks(hass: HomeAssistant) -> bool:
     """Restore YAML customizations after a config entry stops overriding them.
 
+    Keep the entry metadata until YAML hook application succeeds. If that await
+    is canceled, the entry listener remains active with its original settings.
+
     Args:
         hass (HomeAssistant): Home Assistant instance.
+
+    Raises:
+        asyncio.CancelledError: If YAML hook application is canceled before commit.
 
     Returns:
         bool: Whether the configured frontend state was restored.
     """
     data = hass.data.get(DOMAIN, {})
     _invalidate_pending_apply(hass)
-    data.pop(_ACTIVE_ENTRY_LIFETIME, None)
+    active_entry_lifetime = data.pop(_ACTIVE_ENTRY_LIFETIME, None)
     yaml_config = data.get("yaml_config", {})
+    if yaml_config:
+        try:
+            applied = await apply_hooks(hass, dict(yaml_config))
+        except asyncio.CancelledError:
+            # The entry hooks are still installed until YAML icon discovery
+            # finishes. Restore their listener lifetime if unload is canceled.
+            if active_entry_lifetime is not None and _ACTIVE_ENTRY_LIFETIME not in data:
+                data[_ACTIVE_ENTRY_LIFETIME] = active_entry_lifetime
+            raise
+        if _ACTIVE_ENTRY_LIFETIME in data:
+            return applied
+        for key in CONF_KEYS:
+            data.pop(key, None)
+        data.update(yaml_config)
+        return applied
     for key in CONF_KEYS:
         data.pop(key, None)
     data.update(yaml_config)
-    if yaml_config:
-        return await apply_hooks(hass, dict(yaml_config))
     return remove_hooks(hass)
 
 
