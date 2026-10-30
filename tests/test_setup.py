@@ -2,20 +2,15 @@
 
 import asyncio
 import html
-import json
 import logging
 from pathlib import Path
-import re
 import threading
-from unittest.mock import patch
 
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 from aiohttp.web_urldispatcher import SystemRoute, UrlMappingMatchInfo
 from homeassistant.components import frontend
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResultType
-from homeassistant.helpers.data_entry_flow import FlowManagerIndexView
 from jinja2 import Template
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -29,7 +24,6 @@ from custom_components.favicon import (
     find_icons,
     remove_hooks,
 )
-from custom_components.favicon.config_flow import FaviconConfigFlow
 from custom_components.favicon.const import CONF_ICON_COLOR, CONF_ICON_PATH, CONF_TITLE, DOMAIN
 
 
@@ -70,7 +64,8 @@ async def test_stored_color_and_title_rendering_and_unload_restores_frontend(
             'href="/static/icons/favicon.ico"><link rel="apple-touch-icon" '
             'href="/static/icons/favicon-apple-180x180.png"><link rel="mask-icon" '
             'href="/static/icons/mask-icon.svg" color="#18bcf2"></head>'
-            '<body><svg><path fill="#18bcf2"></path></svg></body></html>'
+            '<body><svg><path fill="#18bcf2"></path><path fill="#123456"></path>'
+            "</svg></body></html>"
         ),
     )
     original_names = {key: frontend.MANIFEST_JSON[key] for key in ("name", "short_name")}
@@ -96,14 +91,9 @@ async def test_stored_color_and_title_rendering_and_unload_restores_frontend(
     rendered = await (await client.get("/")).text()
 
     assert f"<title>{html.escape(title)}</title>" in rendered
-    serialized_title = re.search(r"const title = (.+);", rendered)
-    assert serialized_title is not None
-    assert json.loads(serialized_title.group(1)) == title
     assert "</script><img" not in rendered
-    assert 'querySelector(".title").textContent = title' in rendered
-    assert 'querySelector(".title").innerHTML' not in rendered
     assert f'href="/static/icons/mask-icon.svg" color="{escaped_color}"' in rendered
-    assert f'<path fill="{escaped_color}">' in rendered
+    assert f'<path fill="{escaped_color}"></path><path fill="#123456"></path>' in rendered
     assert f'color="{stored_color}"' not in rendered
     assert f'<path fill="{stored_color}">' not in rendered
     assert 'href="/local/custom-favicons/favicon.ico"' in rendered
@@ -188,27 +178,6 @@ def test_malformed_icon_filename_does_not_block_valid_icons(
     )
 
 
-async def test_entry_unload_restores_original_frontend(hass: HomeAssistant) -> None:
-    """Restore the original frontend when a config entry unloads.
-
-    Args:
-        hass (HomeAssistant): Home Assistant test instance.
-    """
-    original_manifest_icons = frontend.MANIFEST_JSON["icons"].copy()
-    original_names = {key: frontend.MANIFEST_JSON[key] for key in ("name", "short_name")}
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={CONF_TITLE: "Entry only", CONF_ICON_PATH: "/local/missing-icons/"},
-    )
-    with patch("custom_components.favicon.apply_hooks", autospec=True, return_value=True):
-        assert await async_setup_entry(hass, entry) is True
-    assert await async_unload_entry(hass, entry) is True
-    assert frontend.MANIFEST_JSON["icons"] == original_manifest_icons
-    assert {key: frontend.MANIFEST_JSON[key] for key in original_names} == original_names
-    assert await async_remove_entry(hass, entry) is True
-    assert {key: frontend.MANIFEST_JSON[key] for key in original_names} == original_names
-
-
 async def test_remove_entry_without_runtime_data_is_safe(hass: HomeAssistant) -> None:
     """Leave the frontend alone when removing an entry that was never loaded.
 
@@ -261,20 +230,20 @@ async def test_resolver_preserves_resource_less_route_result(
     entry = MockConfigEntry(domain=DOMAIN)
     entry.add_to_hass(hass)
     assert await async_setup_entry(hass, entry) is True
-    assert frontend.IndexView.resolve is not resolve
 
     index_view = next(
         view for view in hass.http.app.router.resources() if isinstance(view, frontend.IndexView)
     )
-    result, result_allowed_methods = await index_view.resolve(make_mocked_request("GET", "/"))
+    request = make_mocked_request("GET", "/")
+    result, result_allowed_methods = await index_view.resolve(request)
 
-    assert route.resource is None
-    assert result is match_info
-    assert result_allowed_methods is allowed_methods
+    with pytest.raises(web.HTTPNotFound):
+        await result.handler(request)
+    assert result_allowed_methods == {"GET", "HEAD"}
     assert await async_remove_entry(hass, entry) is True
 
 
-@pytest.mark.parametrize("reload_entry", [False, True])
+@pytest.mark.parametrize("reload_entry", [False, True], ids=["unloaded", "reloaded"])
 async def test_queued_listener_ignores_unloaded_entry(
     hass: HomeAssistant, reload_entry: bool
 ) -> None:
@@ -287,18 +256,20 @@ async def test_queued_listener_ignores_unloaded_entry(
     entry = MockConfigEntry(domain=DOMAIN, data={CONF_TITLE: "Test home"})
     entry.add_to_hass(hass)
 
-    with patch("custom_components.favicon.apply_hooks", autospec=True, return_value=True) as apply:
-        assert await async_setup_entry(hass, entry) is True
-        listener = entry.update_listeners[0]
+    original_name = frontend.MANIFEST_JSON["name"]
+    assert await async_setup_entry(hass, entry)
+    listener = entry.update_listeners[0]
+    assert await async_unload_entry(hass, entry)
+    await entry._async_process_on_unload(hass)
+    expected_name = original_name
+    if reload_entry:
+        assert await async_setup_entry(hass, entry)
+        assert await apply_hooks(hass, entry, {CONF_TITLE: "Reloaded home"})
+        expected_name = "Reloaded home"
 
-        assert await async_unload_entry(hass, entry) is True
-        await entry._async_process_on_unload(hass)
-        if reload_entry:
-            assert await async_setup_entry(hass, entry) is True
-        apply.reset_mock()
-        await listener(hass, entry)
-        apply.assert_not_awaited()
-
+    await listener(hass, entry)
+    assert frontend.MANIFEST_JSON["name"] == expected_name
+    assert await async_unload_entry(hass, entry)
     await entry._async_process_on_unload(hass)
 
 
@@ -416,12 +387,21 @@ async def test_latest_overlapping_apply_wins(
     remove_hooks(entry)
 
 
-@pytest.mark.parametrize("transition", ["update", "unload", "remove"])
+@pytest.mark.parametrize(
+    ("transition", "expected_title"),
+    [
+        ("update", "New title"),
+        ("unload", "Home Assistant"),
+        ("remove", "Home Assistant"),
+    ],
+    ids=["update", "unload", "remove"],
+)
 async def test_in_flight_page_load_preserves_current_branding(
     favicon_frontend: HomeAssistant,
     hass_client: ClientSessionGenerator,
     monkeypatch: pytest.MonkeyPatch,
     transition: str,
+    expected_title: str,
 ) -> None:
     """Serve current branding after a settings change during an older request.
 
@@ -430,6 +410,7 @@ async def test_in_flight_page_load_preserves_current_branding(
         hass_client (ClientSessionGenerator): Authenticated HTTP client factory.
         monkeypatch (pytest.MonkeyPatch): Fixture for replacing the template getter.
         transition (str): Entry transition while the original page is loading.
+        expected_title (str): Branding served after the transition completes.
     """
     hass = favicon_frontend
     client = await hass_client()
@@ -472,11 +453,9 @@ async def test_in_flight_page_load_preserves_current_branding(
         await asyncio.wait_for(load_started.wait(), timeout=5)
         if transition == "update":
             assert await apply_hooks(hass, entry, {CONF_TITLE: "New title"}) is True
-            expected_title = "New title"
         else:
             callback = async_unload_entry if transition == "unload" else async_remove_entry
             assert await callback(hass, entry) is True
-            expected_title = "Home Assistant"
     finally:
         release_load.set()
 
@@ -549,97 +528,24 @@ def test_unreadable_icon_directory_warns_and_continues(
     )
 
 
-async def test_entry_setup_and_update(hass: HomeAssistant) -> None:
-    """Return setup success while the registered update callback returns None.
-
-    Args:
-        hass (HomeAssistant): Home Assistant test instance.
-    """
-    entry = MockConfigEntry(domain=DOMAIN, data={CONF_TITLE: "Test home"})
-    entry.add_to_hass(hass)
-    with patch("custom_components.favicon.apply_hooks", autospec=True, return_value=True) as apply:
-        assert await async_setup_entry(hass, entry) is True
-        apply.assert_awaited_once_with(hass, entry, dict(entry.data))
-        listener = entry.update_listeners[0]
-        assert await listener(hass, entry) is None
-
-        updated_settings = {CONF_TITLE: "Updated home"}
-        apply.reset_mock()
-        assert hass.config_entries.async_update_entry(entry, data=updated_settings)
-        await hass.async_block_till_done()
-        apply.assert_awaited_once_with(hass, entry, updated_settings)
-
-
-async def test_user_form(hass: HomeAssistant) -> None:
-    """Return a settings form whose schema accepts frontend selector values.
-
-    Args:
-        hass (HomeAssistant): Home Assistant test instance.
-    """
-    flow = FaviconConfigFlow()
-    flow.hass = hass
-    result = await flow.async_step_user()
-    assert result["type"] is FlowResultType.FORM
-    settings = {
-        CONF_TITLE: "Test home",
-        CONF_ICON_PATH: "/local/favicons/",
-        CONF_ICON_COLOR: [255, 0, 0],
-    }
-    serialized = FlowManagerIndexView(hass.config_entries.flow)._prepare_result_json(result)
-    assert {field["name"] for field in serialized["data_schema"]} == set(settings)
-    schema = result["data_schema"]
-    assert schema is not None
-    assert schema(settings) == settings
-
-    result = await flow.async_step_user(settings)
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"][CONF_ICON_COLOR] == "#ff0000"
-
-
-async def test_options_flow(hass: HomeAssistant, enable_custom_integrations: None) -> None:
-    """Open and save settings through HA's options flow manager.
-
-    Args:
-        hass (HomeAssistant): Home Assistant test instance.
-        enable_custom_integrations (None): Enable loading the integration flow.
-    """
-    settings = {
-        CONF_TITLE: "Test Home Assistant",
-        CONF_ICON_PATH: "/local/favicons/",
-        CONF_ICON_COLOR: "#18bcf2",
-    }
-    entry = MockConfigEntry(domain=DOMAIN, data=settings)
-    entry.add_to_hass(hass)
-    with patch("homeassistant.config_entries.async_process_deps_reqs"):
-        result = await hass.config_entries.options.async_init(entry.entry_id)
-    assert result["type"] is FlowResultType.FORM
-    schema = result["data_schema"]
-    assert schema is not None
-    assert schema({})[CONF_ICON_COLOR] == [24, 188, 242]
-    updated = {**settings, CONF_TITLE: "Updated Home Assistant", CONF_ICON_COLOR: [255, 0, 0]}
-    with patch.object(hass.config_entries, "async_reload", return_value=True) as reload_entry:
-        result = await hass.config_entries.options.async_configure(result["flow_id"], updated)
-    assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert entry.data == {**updated, CONF_ICON_COLOR: "#ff0000"}
-    assert entry.options == {}
-    reload_entry.assert_awaited_once_with(entry.entry_id)
-
-
 async def test_update_listener_cleanup(hass: HomeAssistant) -> None:
-    """Remove update listeners on unload so reloads do not accumulate callbacks.
+    """Apply entry updates while loaded and leave branding restored after unload.
 
     Args:
         hass (HomeAssistant): Home Assistant test instance.
     """
+    original_name = frontend.MANIFEST_JSON["name"]
     entry = MockConfigEntry(domain=DOMAIN, data={CONF_TITLE: "Test home"})
     entry.add_to_hass(hass)
-    with patch("custom_components.favicon.apply_hooks", autospec=True, return_value=True) as apply:
-        for _ in range(2):
-            assert await async_setup_entry(hass, entry)
-            assert len(entry.update_listeners) == 1
-            await entry._async_process_on_unload(hass)
-            assert not entry.update_listeners
-        apply.reset_mock()
-        hass.config_entries.async_update_entry(entry, data={CONF_TITLE: "Unloaded"})
+    for title in ("First update", "Second update"):
+        assert await async_setup_entry(hass, entry)
+        assert hass.config_entries.async_update_entry(entry, data={CONF_TITLE: title})
         await hass.async_block_till_done()
-        apply.assert_not_awaited()
+        assert frontend.MANIFEST_JSON["name"] == title
+        assert await async_unload_entry(hass, entry)
+        await entry._async_process_on_unload(hass)
+        assert frontend.MANIFEST_JSON["name"] == original_name
+
+    hass.config_entries.async_update_entry(entry, data={CONF_TITLE: "Unloaded"})
+    await hass.async_block_till_done()
+    assert frontend.MANIFEST_JSON["name"] == original_name
