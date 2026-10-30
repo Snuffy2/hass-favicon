@@ -20,6 +20,8 @@ import voluptuous as vol
 from .const import CONF_ICON_COLOR, CONF_ICON_PATH, CONF_KEYS, CONF_TITLE, DOMAIN
 
 _LOGGER: logging.Logger = logging.getLogger(__name__)
+_APPLY_GENERATION = "_apply_generation"
+_ACTIVE_ENTRY_LIFETIME = "_active_entry_lifetime"
 
 RE_APPLE = r"^favicon-apple-"
 RE_ICON = r"^favicon-(\d+x\d+)\..+"
@@ -82,8 +84,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.debug("[async_setup_entry] entry.data: %s", entry.data)
     if not hass.data.get(DOMAIN):
         hass.data.setdefault(DOMAIN, {})
-    entry.async_on_unload(entry.add_update_listener(_update_listener))
-    await _update_listener(hass, entry)
+    entry_token = object()
+    hass.data[DOMAIN][_ACTIVE_ENTRY_LIFETIME] = entry_token
+
+    async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
+        await _update_listener(hass, config_entry, entry_token)
+
+    entry.async_on_unload(entry.add_update_listener(update_listener))
+    await update_listener(hass, entry)
     return True
 
 
@@ -113,13 +121,19 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return await _restore_configured_hooks(hass)
 
 
-async def _update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
+async def _update_listener(
+    hass: HomeAssistant, config_entry: ConfigEntry, entry_token: object
+) -> None:
     """Apply updated config-entry settings.
 
     Args:
         hass (HomeAssistant): Home Assistant instance.
         config_entry (ConfigEntry): Entry containing the updated settings.
+        entry_token (object): Token for the active config-entry lifetime.
     """
+    data = hass.data.get(DOMAIN, {})
+    if data.get(_ACTIVE_ENTRY_LIFETIME) is not entry_token:
+        return
     conf = config_entry.options
     for key in CONF_KEYS:
         if key in hass.data[DOMAIN]:
@@ -192,9 +206,14 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
     Returns:
         bool: Whether the customizations were applied.
     """
+    data = hass.data.setdefault(DOMAIN, {})
+    generation: int = data.get(_APPLY_GENERATION, 0) + 1
+    data[_APPLY_GENERATION] = generation
     icons = await hass.loop.run_in_executor(
         None, find_icons, hass, config_data.get(CONF_ICON_PATH, None)
     )
+    if hass.data.get(DOMAIN, {}).get(_APPLY_GENERATION) != generation:
+        return True
     _LOGGER.debug("[apply_hooks] icons: %s", icons)
     title = config_data.get(CONF_TITLE, None)
     launch_icon_color = config_data.get(CONF_ICON_COLOR, None)
@@ -336,6 +355,7 @@ def remove_hooks(hass: HomeAssistant) -> bool:
     data = hass.data.get(DOMAIN)
     if not data or "resolve" not in data or "manifest_icons" not in data:
         return True
+    _invalidate_pending_apply(hass)
     frontend.IndexView.resolve = data["resolve"]  # type: ignore[method-assign]
     frontend.add_manifest_json_key("icons", data["manifest_icons"].copy())
     frontend.add_manifest_json_key("name", "Home Assistant")
@@ -355,6 +375,8 @@ async def _restore_configured_hooks(hass: HomeAssistant) -> bool:
         bool: Whether the configured frontend state was restored.
     """
     data = hass.data.get(DOMAIN, {})
+    _invalidate_pending_apply(hass)
+    data.pop(_ACTIVE_ENTRY_LIFETIME, None)
     yaml_config = data.get("yaml_config", {})
     for key in CONF_KEYS:
         data.pop(key, None)
@@ -362,3 +384,14 @@ async def _restore_configured_hooks(hass: HomeAssistant) -> bool:
     if yaml_config:
         return await apply_hooks(hass, dict(yaml_config))
     return remove_hooks(hass)
+
+
+def _invalidate_pending_apply(hass: HomeAssistant) -> None:
+    """Invalidate icon scans that have not yet applied their frontend changes.
+
+    Args:
+        hass (HomeAssistant): Home Assistant instance.
+    """
+    data = hass.data.get(DOMAIN)
+    if data is not None:
+        data[_APPLY_GENERATION] = data.get(_APPLY_GENERATION, 0) + 1

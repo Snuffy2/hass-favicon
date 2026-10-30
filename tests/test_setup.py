@@ -1,9 +1,12 @@
 """Regression tests for Home Assistant setup and form contracts."""
 
+import asyncio
 import html
 import json
+import logging
 from pathlib import Path
 import re
+import threading
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -18,6 +21,7 @@ import yaml
 
 from custom_components.favicon import (
     CONFIG_SCHEMA,
+    apply_hooks,
     async_remove_entry,
     async_setup,
     async_setup_entry,
@@ -243,13 +247,154 @@ async def test_entry_unload_unregisters_update_listener(hass: HomeAssistant) -> 
     entry.add_to_hass(hass)
 
     assert await async_setup(hass, {}) is True
-    with patch("custom_components.favicon.apply_hooks", autospec=True, return_value=True):
+    with patch("custom_components.favicon.apply_hooks", autospec=True, return_value=True) as apply:
         assert await async_setup_entry(hass, entry) is True
-    assert len(entry.update_listeners) == 1
+        assert len(entry.update_listeners) == 1
+        listener = entry.update_listeners[0]
 
-    assert await async_unload_entry(hass, entry) is True
+        assert await async_unload_entry(hass, entry) is True
+        await listener(hass, entry)
+        apply.assert_awaited_once_with(hass, dict(entry.data))
+
     await entry._async_process_on_unload(hass)
     assert entry.update_listeners == []
+
+
+@pytest.mark.parametrize("yaml_configured", [False, True])
+async def test_unload_discards_in_flight_entry_icon_scan(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    yaml_configured: bool,
+) -> None:
+    """Keep unload restoration after an entry scan that finishes late.
+
+    Args:
+        hass (HomeAssistant): Home Assistant test instance.
+        monkeypatch (pytest.MonkeyPatch): Fixture for replacing icon discovery.
+        caplog (pytest.LogCaptureFixture): Captured logs for missing YAML icon paths.
+        yaml_configured (bool): Whether unload should restore YAML customizations.
+    """
+    original_icons = frontend.MANIFEST_JSON["icons"].copy()
+    yaml_config = (
+        {CONF_TITLE: "YAML title", CONF_ICON_PATH: "/local/missing-yaml-icons/"}
+        if yaml_configured
+        else {}
+    )
+    assert await async_setup(hass, {DOMAIN: yaml_config} if yaml_configured else {}) is True
+
+    scan_started = asyncio.Event()
+    release_scan = threading.Event()
+    entry_icons = [
+        {
+            "src": "/local/entry-icons/favicon-192x192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+        }
+    ]
+
+    def blocked_entry_scan(scan_hass: HomeAssistant, path_str: str) -> dict[str, object]:
+        if path_str != "/local/entry-icons/":
+            return {}
+        scan_hass.loop.call_soon_threadsafe(scan_started.set)
+        if not release_scan.wait(timeout=5):
+            raise TimeoutError("The test did not release the blocked icon scan")
+        return {"manifest": entry_icons}
+
+    monkeypatch.setattr("custom_components.favicon.find_icons", blocked_entry_scan)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_TITLE: "Entry title", CONF_ICON_PATH: "/local/entry-icons/"},
+    )
+    setup_task = hass.async_create_task(async_setup_entry(hass, entry))
+    try:
+        await asyncio.wait_for(scan_started.wait(), timeout=5)
+        assert await async_unload_entry(hass, entry) is True
+    finally:
+        release_scan.set()
+    assert await asyncio.wait_for(setup_task, timeout=5) is True
+
+    assert frontend.MANIFEST_JSON["icons"] == original_icons
+    if yaml_configured:
+        assert frontend.MANIFEST_JSON["name"] == "YAML title"
+        assert frontend.MANIFEST_JSON["short_name"] == "YAML title"
+        assert "Unable to read favicon icon directory" in caplog.text
+    else:
+        assert frontend.MANIFEST_JSON["name"] == "Home Assistant"
+        assert frontend.MANIFEST_JSON["short_name"] == "Assistant"
+
+
+async def test_latest_overlapping_apply_wins(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Prevent an older icon scan from replacing a newer frontend update.
+
+    Args:
+        hass (HomeAssistant): Home Assistant test instance.
+        monkeypatch (pytest.MonkeyPatch): Fixture for replacing the template and icon scan.
+    """
+    monkeypatch.setattr(
+        frontend.IndexView,
+        "get_template",
+        lambda _self: Template(
+            "<html><head><title>Home Assistant</title></head><body></body></html>"
+        ),
+    )
+    assert await async_setup(hass, {}) is True
+    old_scan_started = asyncio.Event()
+    release_old_scan = threading.Event()
+    old_icons = [{"src": "/local/old/favicon-192x192.png", "sizes": "192x192", "type": "image/png"}]
+    latest_icons = [
+        {
+            "src": "/local/latest/favicon-192x192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+        }
+    ]
+
+    def overlapping_scan(scan_hass: HomeAssistant, path_str: str) -> dict[str, object]:
+        if path_str == "/local/old/":
+            scan_hass.loop.call_soon_threadsafe(old_scan_started.set)
+            if not release_old_scan.wait(timeout=5):
+                raise TimeoutError("The test did not release the older icon scan")
+            return {"manifest": old_icons}
+        return {"manifest": latest_icons}
+
+    monkeypatch.setattr("custom_components.favicon.find_icons", overlapping_scan)
+    old_task = hass.async_create_task(
+        apply_hooks(hass, {CONF_TITLE: "Old title", CONF_ICON_PATH: "/local/old/"})
+    )
+    try:
+        await asyncio.wait_for(old_scan_started.wait(), timeout=5)
+        assert (
+            await apply_hooks(hass, {CONF_TITLE: "Latest title", CONF_ICON_PATH: "/local/latest/"})
+            is True
+        )
+    finally:
+        release_old_scan.set()
+    assert await asyncio.wait_for(old_task, timeout=5) is True
+
+    assert frontend.MANIFEST_JSON["icons"] == latest_icons
+    assert frontend.MANIFEST_JSON["name"] == "Latest title"
+    rendered = frontend.IndexView(None, hass).get_template().render()
+    assert "<title>Latest title</title>" in rendered
+    assert "Old title" not in rendered
+    remove_hooks(hass)
+
+
+def test_missing_icon_directory_warns_and_continues(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Return no icons and warn when the configured folder is unavailable.
+
+    Args:
+        hass (HomeAssistant): Home Assistant test instance.
+        caplog (pytest.LogCaptureFixture): Captured warning logs.
+    """
+    with caplog.at_level(logging.WARNING, logger="custom_components.favicon"):
+        assert find_icons(hass, "/local/missing-directory-for-warning-test/") == {}
+
+    assert "Unable to read favicon icon directory" in caplog.text
 
 
 async def test_entry_setup_and_update(hass: HomeAssistant) -> None:
