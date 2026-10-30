@@ -62,21 +62,19 @@ def hex_to_rgb_list(hex_str: str) -> list[int]:
 
 def _get_schema(
     user_input: MutableMapping[str, Any] | None,
-    default_dict: MutableMapping[str, Any] | None = None,
+    default_dict: MutableMapping[str, Any],
 ) -> vol.Schema:
     """Build the form schema using fallback defaults.
 
     Args:
         user_input (MutableMapping[str, Any] | None): Submitted values.
-        default_dict (MutableMapping[str, Any] | None): Fallback values.
+        default_dict (MutableMapping[str, Any]): Fallback values.
 
     Returns:
         vol.Schema: Schema for the favicon settings form.
     """
     if user_input is None:
         user_input = {}
-    if default_dict is None:
-        default_dict = {}
 
     def _get_default(key: str, fallback_default: Any | None = None) -> Any | None:
         """Get the default value for a key.
