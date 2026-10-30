@@ -9,23 +9,26 @@ from playwright.async_api import Page, async_playwright, expect
 import pytest
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
-from tests.test_e2e import configure_favicon
+from tests.test_e2e import configure_favicon, launch_logo_svg
 
 pytestmark = [pytest.mark.end_user, pytest.mark.timeout(60)]
 
 
-@pytest.fixture
-async def browser_page(socket_enabled: None) -> AsyncGenerator[Page]:
-    """Open an isolated Chromium page and close all browser resources afterward.
+@pytest.fixture(params=["chromium", "firefox", "webkit"])
+async def browser_page(
+    request: pytest.FixtureRequest, socket_enabled: None
+) -> AsyncGenerator[Page]:
+    """Open an isolated browser page and close all browser resources afterward.
 
     Args:
+        request (pytest.FixtureRequest): Selected browser engine.
         socket_enabled (None): Allow browser communication with the local server.
 
     Yields:
         Page: Fresh page in a disposable browser context.
     """
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch()
+        browser = await getattr(playwright, request.param).launch()
         try:
             context = await browser.new_context()
             page = await context.new_page()
@@ -86,3 +89,46 @@ async def test_browser_title_icons_and_navigation(
     await browser_page.reload()
     await expect(browser_page.locator("ha-sidebar .title")).to_have_text(title)
     await expect(browser_page).to_have_title(re.compile("Settings.*" + re.escape(title) + "$"))
+
+
+async def test_browser_renders_recolored_launch_logo(
+    favicon_frontend: HomeAssistant,
+    hass_client: ClientSessionGenerator,
+    browser_page: Page,
+) -> None:
+    """Render the served launch logo in the configured color.
+
+    Args:
+        favicon_frontend (HomeAssistant): Real frontend with local icon files.
+        hass_client (ClientSessionGenerator): Authenticated HTTP client factory.
+        browser_page (Page): Isolated browser page.
+    """
+    client = await hass_client()
+    await configure_favicon(client)
+    await favicon_frontend.async_block_till_done()
+    html = await (await client.get("/")).text()
+    match = re.search(r'<img class="ha-logo" src="([^"]+)"', html)
+    assert match is not None and launch_logo_svg(html)
+
+    await browser_page.set_content(f'<img id="logo" src="{match[1]}" width="120" height="120">')
+    colors = await browser_page.evaluate(
+        """async () => {
+            const img = document.getElementById("logo");
+            await img.decode();
+            const canvas = document.createElement("canvas");
+            canvas.width = canvas.height = 120;
+            const context = canvas.getContext("2d");
+            context.drawImage(img, 0, 0, 120, 120);
+            const pixels = context.getImageData(0, 0, 120, 120).data;
+            const near = (i, rgb) => rgb.every((value, c) => Math.abs(pixels[i + c] - value) <= 8);
+            let custom = 0, original = 0;
+            for (let i = 0; i < pixels.length; i += 4) {
+                if (pixels[i + 3] < 250) continue;
+                if (near(i, [0x12, 0x34, 0x56])) custom++;
+                if (near(i, [0x18, 0xbc, 0xf2])) original++;
+            }
+            return {custom, original};
+        }"""
+    )
+    assert colors["custom"] > 1000
+    assert colors["original"] == 0
