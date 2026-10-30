@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="custom_components/favicon/brand/dark_logo.png">
+  <img src="custom_components/favicon/brand/logo.png" alt="Custom Favicon logo" width="379">
+</picture>
+
 # Favicon Changer
 
 [![GitHub Downloads][downloads-shield]][releases]
@@ -61,7 +66,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, tests and pull req
 
 ## Attribution
 
-This project continues the now-deprecated [hass-favicon](https://github.com/thomasloven/hass-favicon) integration originally created by [Thomas Lovén](https://github.com/thomasloven). Thank you, Thomas, for creating the original integration and sharing it with the Home Assistant community.
+This project continues the now-deprecated [hass-favicon](https://github.com/thomasloven/hass-favicon) integration originally created by [thomasloven](https://github.com/thomasloven). Thank you, thomasloven, for creating the original integration and sharing it with the Home Assistant community.
+
+The logo and icon were created by [MelchMwoan](https://github.com/MelchMwoan). Thank you for contributing the project's branding.
 
 [downloads-shield]: https://img.shields.io/github/downloads/Snuffy2/hass-favicon/total?style=for-the-badge&label=total%20downloads
 [downloads-latest-shield]: https://img.shields.io/github/downloads-pre/Snuffy2/hass-favicon/latest/total?style=for-the-badge
