@@ -38,11 +38,18 @@ async def test_entry_setup_and_update(hass: HomeAssistant) -> None:
         hass (HomeAssistant): Home Assistant test instance.
     """
     entry = MockConfigEntry(domain=DOMAIN, data={CONF_TITLE: "Test home"})
+    entry.add_to_hass(hass)
     with patch("custom_components.favicon.apply_hooks", autospec=True, return_value=True) as apply:
         assert await async_setup_entry(hass, entry) is True
         apply.assert_awaited_once_with(hass, dict(entry.data))
         listener = entry.update_listeners[0]
         assert await listener(hass, entry) is None
+
+        updated_settings = {CONF_TITLE: "Updated home"}
+        apply.reset_mock()
+        assert hass.config_entries.async_update_entry(entry, data=updated_settings)
+        await hass.async_block_till_done()
+        apply.assert_awaited_once_with(hass, updated_settings)
 
 
 async def test_user_form(hass: HomeAssistant) -> None:
@@ -65,3 +72,7 @@ async def test_user_form(hass: HomeAssistant) -> None:
     schema = result["data_schema"]
     assert schema is not None
     assert schema(settings) == settings
+
+    result = await flow.async_step_user(settings)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_ICON_COLOR] == "#ff0000"

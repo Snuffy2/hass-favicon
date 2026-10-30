@@ -2,7 +2,7 @@ name: Dependabot auto-merge
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, edited]
 
 concurrency:
   group: dependabot-auto-merge-${{ github.event.pull_request.number }}
@@ -72,8 +72,7 @@ jobs:
       failure() && !cancelled() &&
       github.repository == 'Snuffy2/hass-favicon' &&
       github.event.pull_request.user.login == 'dependabot[bot]' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.base.ref == github.event.repository.default_branch
+      github.event.pull_request.head.repo.full_name == github.repository
     needs: authorize-dependency-update
     runs-on: ubuntu-latest
     permissions:
