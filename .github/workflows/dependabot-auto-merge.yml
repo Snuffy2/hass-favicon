@@ -50,7 +50,7 @@ jobs:
                 >> "${ancestry_proof_items}"
           done < <(jq -r '.[].[] | select(.parents | length == 2) | .parents[1].sha' "${commits}")
           jq -s . "${ancestry_proof_items}" > "${ancestry_proofs}"
-          node .github/scripts/dependabot-auto-merge.mjs \
+          python3 .github/scripts/dependabot_auto_merge.py \
             "${GITHUB_EVENT_PATH}" "${changed_files}" "${commits}" "${ancestry_proofs}"
 
   enable-auto-merge:
