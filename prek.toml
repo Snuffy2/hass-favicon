@@ -35,14 +35,6 @@ rev = "v2.4.3"
 id = "codespell"
 
 [[repos]]
-repo = "https://github.com/streetsidesoftware/cspell-cli"
-rev = "v10.3.0"
-
-[[repos.hooks]]
-id = "cspell"
-files = '\.md$'
-
-[[repos]]
 repo = "local"
 
 [[repos.hooks]]

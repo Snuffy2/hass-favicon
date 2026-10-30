@@ -1270,10 +1270,6 @@ wheels = [
 [[package]]
 name = "hass-favicon"
 source = { virtual = "." }
-dependencies = [
-    { name = "jinja2" },
-    { name = "voluptuous" },
-]
 
 [package.dev-dependencies]
 dev = [
@@ -1326,10 +1322,6 @@ pytest = [
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "jinja2" },
-    { name = "voluptuous" },
-]
 
 [package.metadata.requires-dev]
 dev = [
