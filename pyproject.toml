@@ -35,6 +35,10 @@ lint = [
 ]
 pytest = [
   { include-group = "ha" },
+  "aiohttp",
+  "home-assistant-frontend>=20260930.5",
+  "Pillow>=13.0.0",
+  "playwright>=1.58",
   "pytest>=9",
   "pytest-asyncio",
   "pytest-cov",
@@ -70,6 +74,11 @@ addopts = """
 """
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+  "integration: real Home Assistant component and configuration flow tests",
+  "e2e: HTTP workflows from configuration to served frontend assets",
+  "end_user: Chromium tests of browser-visible behavior",
+]
 
 [tool.coverage.run]
 branch = true

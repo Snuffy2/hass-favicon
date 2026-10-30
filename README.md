@@ -68,3 +68,8 @@ OR
 *  `launch_icon_color` - The color selected for the launch logo and Safari pinned-tab icon. The default is `#18BCF2`.
 
 ![](https://user-images.githubusercontent.com/1299821/62975899-c29d6480-be1b-11e9-9b6b-9d160ef8b439.jpg)
+
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, tests and pull request guidance.
