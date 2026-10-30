@@ -14,7 +14,33 @@ from jinja2 import Template
 import pytest
 
 from custom_components.favicon import apply_hooks, async_setup
-from custom_components.favicon.const import CONF_TITLE
+from custom_components.favicon.const import CONF_ICON_COLOR, CONF_TITLE
+
+
+async def test_launch_icon_color_is_rendered(hass: HomeAssistant) -> None:
+    """Render the configured launch icon color without changing other SVG paths.
+
+    Args:
+        hass (HomeAssistant): Home Assistant test instance.
+    """
+    template = (
+        "<title>Home Assistant</title><body>"
+        '<link rel="mask-icon" href="/static/icons/mask-icon.svg" color="#18bcf2">'
+        '<svg><path fill="#18bcf2"></path><path fill="#123456"></path></svg>'
+        "</body>"
+    )
+    with (
+        patch.object(frontend.IndexView, "get_template", return_value=Template(template)),
+        patch.object(hass, "http", MagicMock()),
+        patch("custom_components.favicon.find_icons", return_value={}),
+        patch.object(frontend, "add_manifest_json_key"),
+    ):
+        await async_setup(hass, {})
+        await apply_hooks(hass, {CONF_ICON_COLOR: "#ff0000"})
+        rendered = frontend.IndexView.get_template(None).render()
+
+    assert '<link rel="mask-icon" href="/static/icons/mask-icon.svg" color="#ff0000">' in rendered
+    assert '<path fill="#ff0000"></path><path fill="#123456"></path>' in rendered
 
 
 @pytest.mark.parametrize("title", ["Test Home Assistant", 'Home "A" & </script><script>test'])
