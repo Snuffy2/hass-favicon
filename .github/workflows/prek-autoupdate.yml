@@ -1,0 +1,34 @@
+name: prek Autoupdate
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prek-autoupdate-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  prek-autoupdate:
+    if: github.repository == 'Snuffy2/hass-favicon'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Update prek hooks
+        id: prek-autoupdate
+        uses: Snuffy2/prek-autoupdate@v2
+        with:
+          token: ${{ secrets.PREK_AUTOUPDATE_TOKEN }}
+          auto-merge: true
+          update-day: "3"

@@ -6,12 +6,11 @@ from pathlib import Path
 import re
 from typing import Any
 
-from jinja2 import Template
-
 from homeassistant.components import frontend
 from homeassistant.config_entries import ConfigEntry, ConfigType
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
+from jinja2 import Template
 
 from .const import CONF_ICON_COLOR, CONF_ICON_PATH, CONF_KEYS, CONF_TITLE, DOMAIN
 
@@ -76,7 +75,6 @@ async def _update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> bo
 
 def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping:
     """Find icons in folder."""
-
     icons: MutableMapping = {}
     manifest: list = []
     if not path_str or not path_str.startswith("/local/"):
@@ -123,11 +121,11 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
     launch_icon_color = config_data.get(CONF_ICON_COLOR, None)
     data = hass.data.get(DOMAIN, {})
 
-    def _get_template(self) -> Template:
+    def _get_template(self: frontend.IndexView) -> Template:
         tpl: Template = data["get_template"](self)
         render: Callable[..., str] = tpl.render
 
-        def new_render(*args, **kwargs) -> str:
+        def new_render(*args: Any, **kwargs: Any) -> str:
             text: str = render(*args, **kwargs)
             _LOGGER.debug("[new_render] original text: %s", text)
             if "favicon" in icons:
@@ -202,7 +200,7 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
     return True
 
 
-def remove_hooks(hass) -> bool:
+def remove_hooks(hass: HomeAssistant) -> bool:
     """Remove hooks."""
     data = hass.data[DOMAIN]
     frontend.IndexView.get_template = data["get_template"]

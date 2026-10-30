@@ -1,9 +1,10 @@
-name: HA and HACS Validate
+name: Validate
 
 on:
-  push:
   pull_request:
-  workflow_dispatch:
+  push:
+    branches:
+      - main
 
 jobs:
   ha_validation:
@@ -11,7 +12,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Hassfest validation
         uses: home-assistant/actions/hassfest@master
   hacs_validation:
@@ -19,7 +22,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: HACS validation
         uses: hacs/action@main
         with:

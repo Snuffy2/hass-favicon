@@ -63,3 +63,17 @@ OR
 *  `icon_path:` - The path (frontend path) of the directory containing your icons.
 
 ![](https://user-images.githubusercontent.com/1299821/62975899-c29d6480-be1b-11e9-9b6b-9d160ef8b439.jpg)
+
+## Development
+
+Install Python 3.14 and uv, then run:
+
+```sh
+uv sync --locked --group dev
+uv run prek install
+uv run prek run --all-files
+```
+
+The `test/` directory contains a manual Home Assistant environment; this
+repository has no pytest suite yet.
+Release automation is described in [.github/RELEASING.md](.github/RELEASING.md).
