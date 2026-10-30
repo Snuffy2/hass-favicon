@@ -1342,7 +1342,7 @@ pytest = [
 [package.metadata.requires-dev]
 dev = [
     { name = "aiohttp" },
-    { name = "home-assistant-frontend", specifier = "==20260930.5" },
+    { name = "home-assistant-frontend", specifier = ">=20260930.5" },
     { name = "homeassistant", specifier = ">=2026.3" },
     { name = "mypy" },
     { name = "pillow", specifier = ">=13.0.0" },
@@ -1384,7 +1384,7 @@ lint = [
 ]
 pytest = [
     { name = "aiohttp" },
-    { name = "home-assistant-frontend", specifier = "==20260930.5" },
+    { name = "home-assistant-frontend", specifier = ">=20260930.5" },
     { name = "homeassistant", specifier = ">=2026.3" },
     { name = "pillow", specifier = ">=13.0.0" },
     { name = "playwright", specifier = ">=1.58" },
