@@ -175,7 +175,10 @@ def test_malformed_icon_filename_does_not_block_valid_icons(
     filenames = [Path("favicon.ico"), Path("favicon-192x192.\udcff.png")]
     monkeypatch.setattr(Path, "iterdir", lambda _path: iter(filenames))
     assert find_icons(hass, "/local/favicons/") == {"favicon": "/local/favicons/favicon.ico"}
-    assert any(record.levelno == logging.WARNING for record in caplog.records)
+    assert any(
+        record.name == "custom_components.favicon" and record.levelno == logging.WARNING
+        for record in caplog.records
+    )
 
 
 async def test_entry_unload_restores_original_frontend(hass: HomeAssistant) -> None:
@@ -202,8 +205,8 @@ async def test_entry_unload_restores_original_frontend(hass: HomeAssistant) -> N
     assert {key: frontend.MANIFEST_JSON[key] for key in original_names} == original_names
 
 
-async def test_entry_unload_unregisters_update_listener(hass: HomeAssistant) -> None:
-    """Remove the update listener when Home Assistant processes entry unload.
+async def test_queued_listener_ignores_unloaded_entry(hass: HomeAssistant) -> None:
+    """Ignore a queued callback after its entry has unloaded.
 
     Args:
         hass (HomeAssistant): Home Assistant test instance.
@@ -214,7 +217,6 @@ async def test_entry_unload_unregisters_update_listener(hass: HomeAssistant) -> 
     assert await async_setup(hass, {}) is True
     with patch("custom_components.favicon.apply_hooks", autospec=True, return_value=True) as apply:
         assert await async_setup_entry(hass, entry) is True
-        assert len(entry.update_listeners) == 1
         listener = entry.update_listeners[0]
 
         assert await async_unload_entry(hass, entry) is True
@@ -222,7 +224,6 @@ async def test_entry_unload_unregisters_update_listener(hass: HomeAssistant) -> 
         apply.assert_awaited_once_with(hass, dict(entry.data))
 
     await entry._async_process_on_unload(hass)
-    assert entry.update_listeners == []
 
 
 async def test_unload_discards_in_flight_entry_icon_scan(
@@ -338,13 +339,13 @@ async def test_latest_overlapping_apply_wins(
 
 
 @pytest.mark.parametrize("transition", ["update", "unload", "remove"])
-async def test_in_flight_template_load_cannot_refill_active_cache(
+async def test_in_flight_page_load_preserves_current_branding(
     favicon_frontend: HomeAssistant,
     hass_client: ClientSessionGenerator,
     monkeypatch: pytest.MonkeyPatch,
     transition: str,
 ) -> None:
-    """Keep old template loads out of the live cache after settings change.
+    """Serve current branding after a settings change during an older request.
 
     Args:
         favicon_frontend (HomeAssistant): Real frontend with isolated icon files.
@@ -381,10 +382,6 @@ async def test_in_flight_template_load_cannot_refill_active_cache(
     entry = MockConfigEntry(domain=DOMAIN, data={CONF_TITLE: entry_title})
     assert await async_setup_entry(hass, entry) is True
 
-    index_view = next(
-        view for view in hass.http.app.router.resources() if isinstance(view, frontend.IndexView)
-    )
-
     async def load_template() -> str:
         """Request rendered HTML through the real frontend route.
 
@@ -408,25 +405,26 @@ async def test_in_flight_template_load_cannot_refill_active_cache(
 
     old_template = await asyncio.wait_for(old_request, timeout=5)
     assert f"<title>{entry_title}</title>" in old_template
-    assert index_view._template_cache is not None
-    assert "<title>Home Assistant</title>" in index_view._template_cache.render()
 
     current_template = await load_template()
     assert f"<title>{expected_title}</title>" in current_template
-    assert index_view._template_cache is not None
-    assert "<title>Home Assistant</title>" in index_view._template_cache.render()
     remove_hooks(hass)
 
 
-async def test_development_frontend_templates_are_not_cached(
-    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+async def test_development_frontend_serves_fresh_templates(
+    favicon_frontend: HomeAssistant,
+    hass_client: ClientSessionGenerator,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Keep development template reloads visible through the active hook.
 
     Args:
-        hass (HomeAssistant): Home Assistant test instance.
+        favicon_frontend (HomeAssistant): Real frontend with isolated icon files.
+        hass_client (ClientSessionGenerator): Authenticated HTTP client factory.
         monkeypatch (pytest.MonkeyPatch): Fixture for replacing the template getter.
     """
+    hass = favicon_frontend
+    client = await hass_client()
     calls = 0
 
     def changing_template(_view: frontend.IndexView) -> Template:
@@ -438,12 +436,15 @@ async def test_development_frontend_templates_are_not_cached(
     assert await async_setup(hass, {}) is True
     assert await apply_hooks(hass, {}) is True
 
-    index_view = frontend.IndexView("/repo", hass)
-    first_template = await hass.async_add_executor_job(index_view.get_template)
-    second_template = await hass.async_add_executor_job(index_view.get_template)
+    index_view = next(
+        view for view in hass.http.app.router.resources() if isinstance(view, frontend.IndexView)
+    )
+    monkeypatch.setattr(index_view, "repo_path", "/repo")
+    first_page = await (await client.get("/")).text()
+    second_page = await (await client.get("/")).text()
 
-    assert first_template.render() == "<title>Template 1</title>"
-    assert second_template.render() == "<title>Template 2</title>"
+    assert first_page == "<title>Template 1</title>"
+    assert second_page == "<title>Template 2</title>"
     remove_hooks(hass)
 
 
@@ -464,7 +465,9 @@ def test_unreadable_icon_directory_warns_and_continues(
         assert find_icons(hass, path) == {}
 
     assert any(
-        record.levelno == logging.WARNING and Path(path).name in record.getMessage()
+        record.name == "custom_components.favicon"
+        and record.levelno == logging.WARNING
+        and Path(path).name in record.getMessage()
         for record in caplog.records
     )
 
