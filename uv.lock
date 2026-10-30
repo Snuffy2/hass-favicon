@@ -1281,9 +1281,11 @@ source = { virtual = "." }
 
 [package.dev-dependencies]
 dev = [
+    { name = "aiohttp" },
     { name = "home-assistant-frontend" },
     { name = "homeassistant" },
     { name = "mypy" },
+    { name = "pillow" },
     { name = "playwright" },
     { name = "prek" },
     { name = "pytest" },
@@ -1323,8 +1325,10 @@ lint = [
     { name = "uv" },
 ]
 pytest = [
+    { name = "aiohttp" },
     { name = "home-assistant-frontend" },
     { name = "homeassistant" },
+    { name = "pillow" },
     { name = "playwright" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -1337,9 +1341,11 @@ pytest = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "aiohttp" },
     { name = "home-assistant-frontend", specifier = "==20260930.5" },
     { name = "homeassistant", specifier = ">=2026.3" },
     { name = "mypy" },
+    { name = "pillow", specifier = ">=13.0.0" },
     { name = "playwright", specifier = ">=1.58" },
     { name = "prek" },
     { name = "pytest", specifier = ">=9" },
@@ -1377,8 +1383,10 @@ lint = [
     { name = "uv", specifier = ">=0.13.4" },
 ]
 pytest = [
+    { name = "aiohttp" },
     { name = "home-assistant-frontend", specifier = "==20260930.5" },
     { name = "homeassistant", specifier = ">=2026.3" },
+    { name = "pillow", specifier = ">=13.0.0" },
     { name = "playwright", specifier = ">=1.58" },
     { name = "pytest", specifier = ">=9" },
     { name = "pytest-asyncio" },
