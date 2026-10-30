@@ -76,4 +76,3 @@ uv run prek run --all-files
 
 The `test/` directory contains a manual Home Assistant environment; this
 repository has no pytest suite yet.
-Release automation is described in [.github/RELEASING.md](.github/RELEASING.md).
