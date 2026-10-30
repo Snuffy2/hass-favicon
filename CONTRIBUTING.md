@@ -25,16 +25,16 @@ release.
 
 ## Tests
 
-Install the locked test dependencies and Chromium, then run the suite:
+Install the locked test dependencies and the Chromium, Firefox and WebKit browsers, then run the suite:
 
 ```sh
 uv sync --locked --group dev
-./.venv/bin/python -m playwright install chromium
+./.venv/bin/python -m playwright install chromium firefox webkit
 ./.venv/bin/pytest
 ```
 
-On Linux, use `./.venv/bin/python -m playwright install --with-deps chromium`
-to install Chromium's system libraries too. The tests use an isolated temporary Home Assistant
+On Linux, use `./.venv/bin/python -m playwright install --with-deps chromium firefox webkit`
+to install the browsers' system libraries too. The tests use an isolated temporary Home Assistant
 configuration and generated icon files; no running Home Assistant is required.
 
 The suite includes integration tests for configuration, options,
