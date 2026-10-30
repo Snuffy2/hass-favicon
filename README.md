@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="custom_components/favicon/brand/dark_logo.png">
+  <img src="custom_components/favicon/brand/logo.png" alt="Custom Favicon logo" width="379">
+</picture>
+
 # Favicon Changer
 
 [![GitHub Downloads][downloads-shield]][releases]
