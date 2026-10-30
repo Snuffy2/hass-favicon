@@ -8,11 +8,12 @@ from pathlib import Path
 import re
 from typing import Any
 
+from aiohttp import web
+from aiohttp.web_urldispatcher import ResourceRoute, UrlMappingMatchInfo
 from homeassistant.components import frontend
 from homeassistant.config_entries import ConfigEntry, ConfigType
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
-from jinja2 import Template
 
 from .const import CONF_ICON_COLOR, CONF_ICON_PATH, CONF_KEYS, CONF_TITLE, DOMAIN
 
@@ -37,11 +38,11 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     if not hass.data.get(DOMAIN):
         hass.data.setdefault(DOMAIN, {})
 
-    if not hass.data[DOMAIN].get("get_template"):
-        hass.data[DOMAIN]["get_template"] = frontend.IndexView.get_template
+    if not hass.data[DOMAIN].get("resolve"):
+        hass.data[DOMAIN]["resolve"] = frontend.IndexView.resolve
     if not hass.data[DOMAIN].get("manifest_icons"):
         hass.data[DOMAIN]["manifest_icons"] = frontend.MANIFEST_JSON["icons"].copy()
-    _LOGGER.debug("[async_setup] get_template: %s", hass.data[DOMAIN]["get_template"])
+    _LOGGER.debug("[async_setup] resolve: %s", hass.data[DOMAIN]["resolve"])
     _LOGGER.debug("[async_setup] manifest_icons: %s", hass.data[DOMAIN]["manifest_icons"])
 
     conf = config.get(DOMAIN)
@@ -160,7 +161,7 @@ def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping:
 
 
 async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]) -> bool:
-    """Apply frontend template and manifest customizations.
+    """Apply frontend response and manifest customizations.
 
     Args:
         hass (HomeAssistant): Home Assistant instance.
@@ -177,76 +178,116 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
     launch_icon_color = config_data.get(CONF_ICON_COLOR, None)
     data = hass.data.get(DOMAIN, {})
 
-    def _get_template(self: frontend.IndexView) -> Template:
-        tpl: Template = data["get_template"](self)
-        render: Callable[..., str] = tpl.render
+    def customize_html(text: str) -> str:
+        """Apply the configured branding to rendered HTML.
 
-        def new_render(*args: Any, **kwargs: Any) -> str:
-            text: str = render(*args, **kwargs)
-            _LOGGER.debug("[new_render] original text: %s", text)
-            if "favicon" in icons:
-                text = text.replace("/static/icons/favicon.ico", str(icons["favicon"]))
-            if "apple" in icons:
-                text = text.replace("/static/icons/favicon-apple-180x180.png", str(icons["apple"]))
-            if title:
-                title_json = json.dumps(title).replace("<", r"\u003c")
-                text = text.replace(
-                    "<title>Home Assistant</title>", f"<title>{escape(title)}</title>"
-                )
-                text = text.replace(
-                    "<body>",
-                    f"""
-                    <body>
-                        <script type="module">
-                            const title = {title_json};
-                            customElements.whenDefined('ha-sidebar').then(() => {{
-                                const Sidebar = customElements.get('ha-sidebar');
-                                const updated = Sidebar.prototype.updated;
-                                Sidebar.prototype.updated = function(changedProperties) {{
-                                    updated.bind(this)(changedProperties);
-                                    this.shadowRoot.querySelector(".title").textContent = title;
-                                }};
-                            }});
+        Args:
+            text (str): Original frontend HTML.
 
-                            window.setInterval(() => {{
-                                if(document.title !== title &&
-                                   !document.title.endsWith(" – " + title) &&
-                                   !document.title.endsWith(" - " + title) &&
-                                   document.title.endsWith("Home Assistant")) {{
-                                    document.title = document.title.replace(/Home Assistant$/, () => title);
-                                }}
-                            }}, 1000);
-                        </script>
-                    """,  # noqa: E501
-                )
+        Returns:
+            str: Branded frontend HTML.
+        """
+        _LOGGER.debug("[customize_html] original text: %s", text)
+        if "favicon" in icons:
+            text = text.replace("/static/icons/favicon.ico", str(icons["favicon"]))
+        if "apple" in icons:
+            text = text.replace("/static/icons/favicon-apple-180x180.png", str(icons["apple"]))
+        if title:
+            title_json = json.dumps(title).replace("<", r"\u003c")
+            text = text.replace(
+                "<title>Home Assistant</title>", f"<title>{escape(title)}</title>"
+            )
+            text = text.replace(
+                "<body>",
+                f"""
+                <body>
+                    <script type="module">
+                        const title = {title_json};
+                        customElements.whenDefined('ha-sidebar').then(() => {{
+                            const Sidebar = customElements.get('ha-sidebar');
+                            const updated = Sidebar.prototype.updated;
+                            Sidebar.prototype.updated = function(changedProperties) {{
+                                updated.bind(this)(changedProperties);
+                                this.shadowRoot.querySelector(".title").textContent = title;
+                            }};
+                        }});
 
-            if launch_icon_color:
-                # Regex to match hex color codes (e.g., #18bcf2, #123ABC)
-                hex_color_pattern = r"#(?:[0-9a-fA-F]{6})"
+                        window.setInterval(() => {{
+                            if(document.title !== title &&
+                               !document.title.endsWith(" – " + title) &&
+                               !document.title.endsWith(" - " + title) &&
+                               document.title.endsWith("Home Assistant")) {{
+                                document.title = document.title.replace(/Home Assistant$/, () => title);
+                            }}
+                        }}, 1000);
+                    </script>
+                """,  # noqa: E501
+            )
 
-                text = re.sub(
-                    r'(<link rel="mask-icon" href="/static/icons/mask-icon\.svg" color=")'
-                    + hex_color_pattern
-                    + r'(">)',
-                    rf"\1{launch_icon_color}\2",
-                    text,
-                )
-                text = re.sub(
-                    rf'(<path fill="){hex_color_pattern}(")',
-                    rf"\1{launch_icon_color}\2",
-                    text,
-                    count=1,  # Only replace the first occurrence
-                )
+        if launch_icon_color:
+            # Regex to match hex color codes (e.g., #18bcf2, #123ABC)
+            hex_color_pattern = r"#(?:[0-9a-fA-F]{6})"
 
-            return text
+            text = re.sub(
+                r'(<link rel="mask-icon" href="/static/icons/mask-icon\.svg" color=")'
+                + hex_color_pattern
+                + r'(">)',
+                rf"\1{launch_icon_color}\2",
+                text,
+            )
+            text = re.sub(
+                rf'(<path fill="){hex_color_pattern}(")',
+                rf"\1{launch_icon_color}\2",
+                text,
+                count=1,  # Only replace the first occurrence
+            )
 
-        tpl.render = new_render  # type: ignore[method-assign]  # Wrap this template instance.
-        return tpl
+        return text
 
-    frontend.IndexView.get_template = _get_template  # type: ignore[method-assign]
-    for view in hass.http.app.router.resources():
-        if isinstance(view, frontend.IndexView):
-            view._template_cache = None  # noqa: SLF001
+    async def resolve(
+        self: frontend.IndexView, request: web.Request
+    ) -> tuple[UrlMappingMatchInfo | None, set[str]]:
+        """Wrap only successful frontend routes without changing template caches.
+
+        Args:
+            self (frontend.IndexView): Frontend resource being resolved.
+            request (web.Request): Incoming HTTP request.
+
+        Returns:
+            tuple[UrlMappingMatchInfo | None, set[str]]: Route and allowed methods.
+        """
+        match_info, allowed_methods = await data["resolve"](self, request)
+        if match_info is None or self.hass is not hass:
+            return match_info, allowed_methods
+
+        async def handle(request: web.Request) -> web.StreamResponse:
+            """Customize a successful HTML response from the original handler.
+
+            Args:
+                request (web.Request): Incoming HTTP request.
+
+            Returns:
+                web.StreamResponse: Original response with optional HTML branding.
+            """
+            response = await match_info.handler(request)
+            if (
+                isinstance(response, web.Response)
+                and response.status == 200
+                and response.content_type == "text/html"
+                and response.text is not None
+            ):
+                response.text = customize_html(response.text)
+            return response
+
+        route = ResourceRoute(
+            match_info.route.method,
+            handle,
+            match_info.route.resource,
+            expect_handler=match_info.route.handle_expect_header,
+        )
+        return UrlMappingMatchInfo(match_info, route), allowed_methods
+
+    frontend.IndexView.resolve = resolve  # type: ignore[method-assign]
 
     if "manifest" in icons:
         frontend.add_manifest_json_key("icons", icons["manifest"])
@@ -264,7 +305,7 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
 
 
 def remove_hooks(hass: HomeAssistant) -> bool:
-    """Restore the original frontend template and manifest.
+    """Restore the original frontend routing and manifest.
 
     Args:
         hass (HomeAssistant): Home Assistant instance.
@@ -273,10 +314,7 @@ def remove_hooks(hass: HomeAssistant) -> bool:
         bool: Whether the original frontend was restored.
     """
     data = hass.data[DOMAIN]
-    frontend.IndexView.get_template = data["get_template"]  # type: ignore[method-assign]
-    for view in hass.http.app.router.resources():
-        if isinstance(view, frontend.IndexView):
-            view._template_cache = None  # noqa: SLF001
+    frontend.IndexView.resolve = data["resolve"]  # type: ignore[method-assign]
     frontend.add_manifest_json_key("icons", data["manifest_icons"].copy())
     frontend.add_manifest_json_key("name", "Home Assistant")
     frontend.add_manifest_json_key("short_name", "Assistant")

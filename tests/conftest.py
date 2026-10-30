@@ -46,7 +46,7 @@ async def favicon_frontend(
     Yields:
         HomeAssistant: Instance with a real frontend and isolated icon files.
     """
-    original_template = frontend.IndexView.get_template
+    original_resolve = frontend.IndexView.resolve
     manifest = deepcopy(frontend.MANIFEST_JSON.manifest)
     with patch("homeassistant.components.onboarding.async_is_onboarded", return_value=True):
         try:
@@ -54,8 +54,5 @@ async def favicon_frontend(
             await hass.async_block_till_done()
             yield hass
         finally:
-            frontend.IndexView.get_template = original_template
-            frontend.MANIFEST_JSON.manifest.clear()
-            frontend.MANIFEST_JSON.manifest.update(manifest)
-            frontend.MANIFEST_JSON._serialize()
-            frontend._async_render_index_cached.cache_clear()
+            frontend.IndexView.resolve = original_resolve
+            frontend.MANIFEST_JSON = frontend.Manifest(manifest)

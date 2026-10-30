@@ -1,5 +1,7 @@
 """End-to-end HTTP coverage using Home Assistant's real frontend and APIs."""
 
+from unittest.mock import patch
+
 from aiohttp.test_utils import TestClient
 from homeassistant.core import HomeAssistant
 import pytest
@@ -44,6 +46,8 @@ async def test_configure_and_serve_assets(
         hass_client (ClientSessionGenerator): Authenticated HTTP client factory.
     """
     client = await hass_client()
+    response = await client.get("/")
+    assert "<title>Home Assistant</title>" in await response.text()
     await configure_favicon(client)
     await favicon_frontend.async_block_till_done()
 
@@ -112,6 +116,8 @@ async def test_options_and_removal_update_served_page(
         hass_client (ClientSessionGenerator): Authenticated HTTP client factory.
     """
     client = await hass_client()
+    response = await client.get("/")
+    original_html = await response.text()
     entry_id = await configure_favicon(client)
     await favicon_frontend.async_block_till_done()
     response = await client.get("/")
@@ -134,6 +140,7 @@ async def test_options_and_removal_update_served_page(
     assert "<title>New home</title>" in html
     assert "/static/icons/favicon.ico" in html
     assert 'color="#000000"' in html
+    assert html.count("customElements.whenDefined('ha-sidebar')") == 1
 
     response = await client.delete(f"/api/config/config_entries/entry/{entry_id}")
     assert response.status == 200
@@ -143,3 +150,26 @@ async def test_options_and_removal_update_served_page(
     assert "<title>Home Assistant</title>" in html
     assert "/static/icons/favicon.ico" in html
     assert "New home" not in html
+    assert html == original_html
+
+
+async def test_frontend_preserves_redirects_and_errors(
+    favicon_frontend: HomeAssistant, hass_client: ClientSessionGenerator
+) -> None:
+    """Keep frontend redirects and routing failures intact while branding is active.
+
+    Args:
+        favicon_frontend (HomeAssistant): Real frontend with local icon files.
+        hass_client (ClientSessionGenerator): Authenticated HTTP client factory.
+    """
+    client = await hass_client()
+    await configure_favicon(client)
+    await favicon_frontend.async_block_till_done()
+    response = await client.get("/not-a-panel")
+    assert response.status == 404
+    response = await client.post("/")
+    assert response.status == 405
+    with patch("homeassistant.components.onboarding.async_is_onboarded", return_value=False):
+        response = await client.get("/", allow_redirects=False)
+    assert response.status == 302
+    assert response.headers["Location"] == "/onboarding.html"
