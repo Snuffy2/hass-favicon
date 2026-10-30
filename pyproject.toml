@@ -77,7 +77,7 @@ asyncio_mode = "auto"
 markers = [
   "integration: real Home Assistant component and configuration flow tests",
   "e2e: HTTP workflows from configuration to served frontend assets",
-  "end_user: Chromium tests of browser-visible behavior",
+  "end_user: Chromium, Firefox and WebKit tests of browser-visible behavior",
 ]
 
 [tool.coverage.run]
