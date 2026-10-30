@@ -234,10 +234,12 @@ async def test_resolver_preserves_resource_less_route_result(
     index_view = next(
         view for view in hass.http.app.router.resources() if isinstance(view, frontend.IndexView)
     )
-    result, result_allowed_methods = await index_view.resolve(make_mocked_request("GET", "/"))
+    request = make_mocked_request("GET", "/")
+    result, result_allowed_methods = await index_view.resolve(request)
 
-    assert result is match_info
-    assert result_allowed_methods is allowed_methods
+    with pytest.raises(web.HTTPNotFound):
+        await result.handler(request)
+    assert result_allowed_methods == {"GET", "HEAD"}
     assert await async_remove_entry(hass, entry) is True
 
 
