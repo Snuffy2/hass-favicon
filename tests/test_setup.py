@@ -43,12 +43,15 @@ def _create_icon_files(directory: Path, filenames: tuple[str, ...]) -> None:
         (directory / filename).touch()
 
 
-async def test_custom_title_is_rendered_safely_and_unload_restores_frontend(
+async def test_stored_color_and_title_rendering_and_unload_restores_frontend(
     favicon_frontend: HomeAssistant,
     hass_client: ClientSessionGenerator,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Escape custom title output and restore original frontend state on unload.
+    """Escape custom title and stored config-entry color, then restore on unload.
+
+    The quote-bearing color exercises persisted entry data. The normal color selector
+    accepts RGB channels, which the config flow converts to a hex string.
 
     Args:
         favicon_frontend (HomeAssistant): Real frontend with isolated icon files.
@@ -77,10 +80,12 @@ async def test_custom_title_is_rendered_safely_and_unload_restores_frontend(
         ("favicon.ico", "favicon-apple-180x180.png", "favicon-192x192.png"),
     )
     title = 'Lab "quoted"\n</script><img src=x onerror=alert(1)>'
+    stored_color = '#ff0000" onload="alert(1)'
+    escaped_color = "#ff0000&quot; onload=&quot;alert(1)"
     settings = {
         CONF_TITLE: title,
         CONF_ICON_PATH: "/local/custom-favicons/",
-        CONF_ICON_COLOR: "#ff0000",
+        CONF_ICON_COLOR: stored_color,
     }
 
     assert await async_setup(hass, {}) is True
@@ -96,8 +101,10 @@ async def test_custom_title_is_rendered_safely_and_unload_restores_frontend(
     assert "</script><img" not in rendered
     assert 'querySelector(".title").textContent = title' in rendered
     assert 'querySelector(".title").innerHTML' not in rendered
-    assert 'href="/static/icons/mask-icon.svg" color="#ff0000"' in rendered
-    assert '<path fill="#ff0000">' in rendered
+    assert f'href="/static/icons/mask-icon.svg" color="{escaped_color}"' in rendered
+    assert f'<path fill="{escaped_color}">' in rendered
+    assert f'color="{stored_color}"' not in rendered
+    assert f'<path fill="{stored_color}">' not in rendered
     assert 'href="/local/custom-favicons/favicon.ico"' in rendered
     assert 'href="/local/custom-favicons/favicon-apple-180x180.png"' in rendered
 
