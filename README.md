@@ -50,7 +50,7 @@ OR
 
 -----
 
-*  Enter your wanted title and the path to your icons. E.g. `Icon path: /local/favicons/`
+*  Enter your wanted title, the directory containing your icons (e.g. `Icon path: /local/favicons/`), and choose a launch icon color.
 
 *  Press submit
 
@@ -63,5 +63,8 @@ OR
 *  `title` - The title to display at the top of the window or browser tab.
 
 *  `icon_path:` - The path (frontend path) of the directory containing your icons.
+   Use `/local/favicon/` for files in `<your config dir>/www/favicon/`, rather than a path to `favicon.ico` itself.
+
+*  `launch_icon_color` - The color selected for the launch logo and Safari pinned-tab icon. The default is `#18BCF2`.
 
 ![](https://user-images.githubusercontent.com/1299821/62975899-c29d6480-be1b-11e9-9b6b-9d160ef8b439.jpg)

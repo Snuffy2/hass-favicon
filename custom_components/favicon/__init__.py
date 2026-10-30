@@ -1,6 +1,8 @@
 """Initialize hass-favicon."""
 
 from collections.abc import Callable, MutableMapping
+from html import escape
+import json
 import logging
 from pathlib import Path
 import re
@@ -65,7 +67,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.debug("[async_setup_entry] entry.data: %s", entry.data)
     if not hass.data.get(DOMAIN):
         hass.data.setdefault(DOMAIN, {})
-    entry.add_update_listener(_update_listener)
+    entry.async_on_unload(entry.add_update_listener(_update_listener))
     await _update_listener(hass, entry)
     return True
 
@@ -187,24 +189,31 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
             if "apple" in icons:
                 text = text.replace("/static/icons/favicon-apple-180x180.png", str(icons["apple"]))
             if title:
-                text = text.replace("<title>Home Assistant</title>", f"<title>{title}</title>")
+                title_json = json.dumps(title).replace("<", r"\u003c")
+                text = text.replace(
+                    "<title>Home Assistant</title>", f"<title>{escape(title)}</title>"
+                )
                 text = text.replace(
                     "<body>",
                     f"""
                     <body>
                         <script type="module">
+                            const title = {title_json};
                             customElements.whenDefined('ha-sidebar').then(() => {{
                                 const Sidebar = customElements.get('ha-sidebar');
                                 const updated = Sidebar.prototype.updated;
                                 Sidebar.prototype.updated = function(changedProperties) {{
                                     updated.bind(this)(changedProperties);
-                                    this.shadowRoot.querySelector(".title").innerHTML = "{title}";
+                                    this.shadowRoot.querySelector(".title").textContent = title;
                                 }};
                             }});
 
                             window.setInterval(() => {{
-                                if(!document.title.endsWith("- {title}") && document.title !== "{title}") {{
-                                    document.title = document.title.replace(/Home Assistant/, "{title}");
+                                if(document.title !== title &&
+                                   !document.title.endsWith(" – " + title) &&
+                                   !document.title.endsWith(" - " + title) &&
+                                   document.title.endsWith("Home Assistant")) {{
+                                    document.title = document.title.replace(/Home Assistant$/, () => title);
                                 }}
                             }}, 1000);
                         </script>
