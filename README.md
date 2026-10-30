@@ -15,7 +15,9 @@ Customize the page title, favicon, app icons, and launch icon color of your Home
 
 ## Installation
 
-1. In HACS, add `https://github.com/Snuffy2/hass-favicon` as a custom repository.
+Use **HACS** on Home Assistant versions before 2026.11, or **Marketplace** on 2026.11 and later. [Marketplace replaces HACS and is built into Home Assistant](https://contributors.home-assistant.io/marketplace/), under Settings > Marketplace.
+
+1. In HACS or Marketplace, add `https://github.com/Snuffy2/hass-favicon` as a custom repository.
 2. Download `Favicon Changer (Snuffy2)` and restart Home Assistant.
 3. Copy an icon set into `<your config dir>/www/favicons/`. Ready-to-use sets are included in [`icons/`](icons/): `dev`, `green`, `orange`, and `red`. If you created the `www` directory, restart Home Assistant before using its files.
 
