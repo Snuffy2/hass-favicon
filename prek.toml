@@ -1,0 +1,69 @@
+[[repos]]
+repo = "https://github.com/pre-commit/pre-commit-hooks"
+rev = "v6.0.0"
+
+[[repos.hooks]]
+id = "trailing-whitespace"
+exclude = ".*\\.md$"
+
+[[repos.hooks]]
+id = "end-of-file-fixer"
+exclude = ".*\\.md$"
+
+[[repos.hooks]]
+id = "check-yaml"
+
+[[repos.hooks]]
+id = "check-toml"
+
+[[repos.hooks]]
+id = "check-added-large-files"
+exclude = "^uv\\.lock$"
+
+[[repos]]
+repo = "https://github.com/kjanat/actionlint"
+rev = "v1.17"
+
+[[repos.hooks]]
+id = "actionlint-shellcheck"
+
+[[repos]]
+repo = "https://github.com/codespell-project/codespell"
+rev = "v2.4.3"
+
+[[repos.hooks]]
+id = "codespell"
+
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "mypy"
+name = "mypy"
+language = "system"
+# Keep the hook itself unlocked so a local `prek run -a` can create `.venv`
+# and refresh a missing or stale lockfile. An exact sync prevents leftover
+# packages from changing the types mypy checks. CI sets `UV_LOCKED=1` externally.
+# Select Python here because the autofix action does not forward `UV_PYTHON`.
+entry = "uv run --python 3.14 --exact --group dev mypy --config-file=pyproject.toml"
+types = ["python"]
+require_serial = true
+
+[[repos]]
+repo = "https://github.com/jsh9/pydoclint"
+rev = "0.11.1"
+
+[[repos.hooks]]
+id = "pydoclint"
+language_version = "python3.14"
+
+[[repos]]
+repo = "https://github.com/astral-sh/ruff-pre-commit"
+rev = "v0.17.1"
+
+[[repos.hooks]]
+id = "ruff-check"
+args = ["--fix"]
+
+[[repos.hooks]]
+id = "ruff-format"

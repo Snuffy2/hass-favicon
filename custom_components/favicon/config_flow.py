@@ -6,11 +6,10 @@ from collections.abc import MutableMapping
 import logging
 from typing import Any
 
-import voluptuous as vol
-
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.core import callback
 from homeassistant.helpers import selector
+import voluptuous as vol
 
 from .const import (
     CONF_ICON_COLOR,
@@ -26,7 +25,14 @@ _LOGGER: logging.Logger = logging.getLogger(__name__)
 
 
 def rgb_list_to_hex(rgb: list[int]) -> str | None:
-    """Convert a rgb list color to a hex string."""
+    """Convert an RGB list color to a hex string.
+
+    Args:
+        rgb (list[int]): Red, green, and blue channel values.
+
+    Returns:
+        str | None: Hex color, or None for invalid channels.
+    """
     if len(rgb) != 3 or not all(0 <= x <= 255 for x in rgb):
         return None
     hex_str: str = ("{:02X}" * 3).format(rgb[0], rgb[1], rgb[2]).lower()
@@ -37,7 +43,14 @@ def rgb_list_to_hex(rgb: list[int]) -> str | None:
 
 
 def hex_to_rgb_list(hex_str: str) -> list[int]:
-    """Convert a hex color to rbg as a list."""
+    """Convert a hex color to RGB as a list.
+
+    Args:
+        hex_str (str): Six-digit hex color with an optional leading hash.
+
+    Returns:
+        list[int]: Red, green, and blue channel values.
+    """
     hex_str = hex_str.lstrip("#").upper()
     rgb: list[int] = [int(hex_str[i : i + 2], 16) for i in (0, 2, 4)]
     _LOGGER.debug("[hex_to_rgb_list] hex: #%s, rgb: %s", hex_str, rgb)
@@ -48,14 +61,30 @@ def _get_schema(
     user_input: MutableMapping[str, Any] | None,
     default_dict: MutableMapping[str, Any] | None = None,
 ) -> vol.Schema:
-    """Get a schema using the default_dict as a backup."""
+    """Build the form schema using fallback defaults.
+
+    Args:
+        user_input (MutableMapping[str, Any] | None): Submitted values.
+        default_dict (MutableMapping[str, Any] | None): Fallback values.
+
+    Returns:
+        vol.Schema: Schema for the favicon settings form.
+    """
     if user_input is None:
         user_input = {}
     if default_dict is None:
         default_dict = {}
 
     def _get_default(key: str, fallback_default: Any | None = None) -> Any | None:
-        """Get default value for key."""
+        """Get the default value for a key.
+
+        Args:
+            key (str): Setting to look up.
+            fallback_default (Any | None): Value used when no default exists.
+
+        Returns:
+            Any | None: Submitted, configured, or fallback value.
+        """
         default: Any | None = user_input.get(key)
         if default is None:
             default = default_dict.get(key, fallback_default)
@@ -78,7 +107,11 @@ def _get_schema(
 
 
 async def _convert_color_to_hex(user_input: MutableMapping[str, Any]) -> None:
-    """Convert RGB color list to hex string in user input."""
+    """Convert the submitted RGB color list to a hex string.
+
+    Args:
+        user_input (MutableMapping[str, Any]): Settings updated in place.
+    """
     if isinstance(user_input[CONF_ICON_COLOR], list):
         color_hex = rgb_list_to_hex(rgb=user_input[CONF_ICON_COLOR])
         if color_hex:
@@ -86,7 +119,12 @@ async def _convert_color_to_hex(user_input: MutableMapping[str, Any]) -> None:
 
 
 async def validate_input(user_input: MutableMapping[str, Any], errors: dict[str, Any]) -> None:
-    """Validate user input."""
+    """Validate user input and normalize its color.
+
+    Args:
+        user_input (MutableMapping[str, Any]): Settings updated in place.
+        errors (dict[str, Any]): Validation errors updated in place.
+    """
     await _convert_color_to_hex(user_input)
     if not user_input.get(CONF_ICON_PATH, "").startswith("/local/"):
         errors["base"] = "bad_path"
@@ -101,7 +139,14 @@ class FaviconConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: MutableMapping[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Handle the initial step."""
+        """Handle the initial step.
+
+        Args:
+            user_input (MutableMapping[str, Any] | None): Submitted settings.
+
+        Returns:
+            ConfigFlowResult: Settings form, created entry, or abort result.
+        """
         if self._async_current_entries():
             return self.async_abort(reason="single_instance_allowed")
         errors: dict[str, Any] = {}
@@ -120,7 +165,8 @@ class FaviconConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=_get_schema(user_input=user_input, default_dict=input_defaults),
+            # Home Assistant aliases Voluptuous at runtime; older annotations need no ignore.
+            data_schema=_get_schema(user_input=user_input, default_dict=input_defaults),  # type: ignore[arg-type, unused-ignore]
             errors=errors,
         )
 
@@ -129,7 +175,11 @@ class FaviconConfigFlow(ConfigFlow, domain=DOMAIN):
     def async_get_options_flow(
         _: ConfigEntry,
     ) -> FaviconOptionsFlowHandler:
-        """Options callback for hass-favicon."""
+        """Create the options flow for hass-favicon.
+
+        Returns:
+            FaviconOptionsFlowHandler: Handler for editing favicon settings.
+        """
         return FaviconOptionsFlowHandler()
 
 
@@ -142,7 +192,14 @@ class FaviconOptionsFlowHandler(OptionsFlow):
     async def async_step_init(
         self, user_input: MutableMapping[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Manage the options."""
+        """Manage the options.
+
+        Args:
+            user_input (MutableMapping[str, Any] | None): Submitted settings.
+
+        Returns:
+            ConfigFlowResult: Settings form or completed options result.
+        """
         errors: dict[str, Any] = {}
         if user_input is not None:
             await validate_input(user_input, errors)
@@ -155,6 +212,7 @@ class FaviconOptionsFlowHandler(OptionsFlow):
                 return self.async_create_entry(title="", data={})
         return self.async_show_form(
             step_id="init",
-            data_schema=_get_schema(user_input=dict(self.config_entry.data)),
+            # Home Assistant aliases Voluptuous at runtime; older annotations need no ignore.
+            data_schema=_get_schema(user_input=dict(self.config_entry.data)),  # type: ignore[arg-type, unused-ignore]
             errors=errors,
         )

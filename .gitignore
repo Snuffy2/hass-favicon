@@ -22,3 +22,10 @@ custom_components/*/__pycache__/
 *.pyc
 .coverage
 coverage.xml
+
+# Tool caches and generated reports
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+htmlcov/
+*.egg-info/

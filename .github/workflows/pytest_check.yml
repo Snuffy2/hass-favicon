@@ -1,0 +1,79 @@
+name: pytest check and post coverage
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  tests:
+    name: pytest check and post coverage
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.user.login == 'prek-autoupdate-bot' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      !(contains(github.event.pull_request.labels.*.name, 'dependencies') ||
+      github.event.pull_request.user.type == 'Bot')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Checkout trusted dependency authorization helper
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.user.login == 'dependabot[bot]'
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup uv (with caching)
+        uses: astral-sh/setup-uv@v10.3.2
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          ignore-nothing-to-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Run pytest with coverage from the lock
+        run: uv run --locked --group pytest pytest
+
+      - name: Generate coverage comment
+        # Keep required tests running for update and release PRs without posting coverage.
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.user.login != 'prek-autoupdate-bot' &&
+          github.event.pull_request.user.login != 'dependabot[bot]' &&
+          !startsWith(github.event.pull_request.head.ref, 'release-please--')
+        id: coverage_comment
+        uses: py-cov-action/python-coverage-comment-action@v4.5
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTIVITY: process_pr
+          MINIMUM_GREEN: 90
+          MINIMUM_ORANGE: 70
+
+      - name: Store PR Comment to be Posted
+        if: steps.coverage_comment.outputs.comment_file_written == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-coverage-comment-action
+          path: python-coverage-comment-action.txt
+          retention-days: 1
+
+      - name: Store coverage data for trusted publication
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-coverage-data
+          path: .coverage
+          include-hidden-files: true
+          retention-days: 1

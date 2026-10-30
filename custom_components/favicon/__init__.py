@@ -6,12 +6,11 @@ from pathlib import Path
 import re
 from typing import Any
 
-from jinja2 import Template
-
 from homeassistant.components import frontend
 from homeassistant.config_entries import ConfigEntry, ConfigType
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
+from jinja2 import Template
 
 from .const import CONF_ICON_COLOR, CONF_ICON_PATH, CONF_KEYS, CONF_TITLE, DOMAIN
 
@@ -24,7 +23,15 @@ CONFIG_SCHEMA: Callable[[dict], dict] = cv.empty_config_schema(DOMAIN)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Initial hass-favicon setup."""
+    """Initialize hass-favicon and apply YAML settings when present.
+
+    Args:
+        hass (HomeAssistant): Home Assistant instance.
+        config (ConfigType): Loaded Home Assistant configuration.
+
+    Returns:
+        bool: Whether setup succeeded.
+    """
     if not hass.data.get(DOMAIN):
         hass.data.setdefault(DOMAIN, {})
 
@@ -42,41 +49,78 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         if key in hass.data[DOMAIN]:
             del hass.data[DOMAIN][key]
     hass.data[DOMAIN].update(conf)
-    return await apply_hooks(hass)
+    return await apply_hooks(hass, dict(conf))
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up from a config entry."""
+    """Set up from a config entry.
+
+    Args:
+        hass (HomeAssistant): Home Assistant instance.
+        entry (ConfigEntry): Entry containing the favicon settings.
+
+    Returns:
+        bool: Whether setup succeeded.
+    """
     _LOGGER.debug("[async_setup_entry] entry.data: %s", entry.data)
     if not hass.data.get(DOMAIN):
         hass.data.setdefault(DOMAIN, {})
     entry.add_update_listener(_update_listener)
-    return await _update_listener(hass, entry)
+    await _update_listener(hass, entry)
+    return True
 
 
 async def async_remove_entry(hass: HomeAssistant, _: ConfigEntry) -> bool:
-    """Run before unload."""
+    """Restore the original frontend when removing the entry.
+
+    Args:
+        hass (HomeAssistant): Home Assistant instance.
+
+    Returns:
+        bool: Whether the original frontend was restored.
+    """
     return remove_hooks(hass)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload a config entry."""
+    """Unload a config entry.
+
+    Args:
+        hass (HomeAssistant): Home Assistant instance.
+        entry (ConfigEntry): Entry being unloaded.
+
+    Returns:
+        bool: Whether unloading succeeded.
+    """
     _LOGGER.info("Unloading: %s", entry.data)
     return True
 
 
-async def _update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+async def _update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
+    """Apply updated config-entry settings.
+
+    Args:
+        hass (HomeAssistant): Home Assistant instance.
+        config_entry (ConfigEntry): Entry containing the updated settings.
+    """
     conf = config_entry.options
     for key in CONF_KEYS:
         if key in hass.data[DOMAIN]:
             del hass.data[DOMAIN][key]
     hass.data[DOMAIN].update(conf)
-    return await apply_hooks(hass, dict(config_entry.data))
+    await apply_hooks(hass, dict(config_entry.data))
 
 
 def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping:
-    """Find icons in folder."""
+    """Find icons in a local folder.
 
+    Args:
+        hass (HomeAssistant): Home Assistant instance.
+        path_str (str): Frontend path under /local/ to search.
+
+    Returns:
+        MutableMapping: Discovered icon paths and manifest entries.
+    """
     icons: MutableMapping = {}
     manifest: list = []
     if not path_str or not path_str.startswith("/local/"):
@@ -114,7 +158,15 @@ def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping:
 
 
 async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]) -> bool:
-    """Apply hooks."""
+    """Apply frontend template and manifest customizations.
+
+    Args:
+        hass (HomeAssistant): Home Assistant instance.
+        config_data (MutableMapping[str, Any]): Favicon settings to apply.
+
+    Returns:
+        bool: Whether the customizations were applied.
+    """
     icons = await hass.loop.run_in_executor(
         None, find_icons, hass, config_data.get(CONF_ICON_PATH, None)
     )
@@ -123,11 +175,11 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
     launch_icon_color = config_data.get(CONF_ICON_COLOR, None)
     data = hass.data.get(DOMAIN, {})
 
-    def _get_template(self) -> Template:
+    def _get_template(self: frontend.IndexView) -> Template:
         tpl: Template = data["get_template"](self)
         render: Callable[..., str] = tpl.render
 
-        def new_render(*args, **kwargs) -> str:
+        def new_render(*args: Any, **kwargs: Any) -> str:
             text: str = render(*args, **kwargs)
             _LOGGER.debug("[new_render] original text: %s", text)
             if "favicon" in icons:
@@ -179,10 +231,10 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
 
             return text
 
-        tpl.render = new_render
+        tpl.render = new_render  # type: ignore[method-assign]  # Wrap this template instance.
         return tpl
 
-    frontend.IndexView.get_template = _get_template
+    frontend.IndexView.get_template = _get_template  # type: ignore[method-assign]
     for view in hass.http.app.router.resources():
         if isinstance(view, frontend.IndexView):
             view._template_cache = None  # noqa: SLF001
@@ -202,10 +254,17 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
     return True
 
 
-def remove_hooks(hass) -> bool:
-    """Remove hooks."""
+def remove_hooks(hass: HomeAssistant) -> bool:
+    """Restore the original frontend template and manifest.
+
+    Args:
+        hass (HomeAssistant): Home Assistant instance.
+
+    Returns:
+        bool: Whether the original frontend was restored.
+    """
     data = hass.data[DOMAIN]
-    frontend.IndexView.get_template = data["get_template"]
+    frontend.IndexView.get_template = data["get_template"]  # type: ignore[method-assign]
     frontend.add_manifest_json_key("icons", data["manifest_icons"].copy())
     frontend.add_manifest_json_key("name", "Home Assistant")
     frontend.add_manifest_json_key("short_name", "Assistant")
