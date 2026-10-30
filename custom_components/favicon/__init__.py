@@ -1,6 +1,7 @@
 """Initialize hass-favicon."""
 
-from collections.abc import MutableMapping
+from collections.abc import Awaitable, Callable, MutableMapping
+from dataclasses import dataclass
 from html import escape
 import json
 import logging
@@ -12,15 +13,31 @@ from urllib.parse import quote
 from aiohttp import web
 from aiohttp.web_urldispatcher import ResourceRoute, UrlMappingMatchInfo
 from homeassistant.components import frontend
-from homeassistant.config_entries import ConfigEntry, ConfigType
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 
 from .const import CONF_ICON_COLOR, CONF_ICON_PATH, CONF_TITLE, DOMAIN
 
 _LOGGER: logging.Logger = logging.getLogger(__name__)
-_APPLY_GENERATION = "_apply_generation"
-_ACTIVE_ENTRY_LIFETIME = "_active_entry_lifetime"
+
+
+@dataclass
+class FaviconRuntimeData:
+    """Original frontend state and guards for one loaded entry lifetime."""
+
+    resolve: Callable[
+        [frontend.IndexView, web.Request],
+        Awaitable[tuple[UrlMappingMatchInfo | None, set[str]]],
+    ]
+    manifest_icons: list[dict[str, str]]
+    manifest_names: dict[str, str]
+    generation: int = 0
+    active: bool = True
+
+
+type FaviconConfigEntry = ConfigEntry[FaviconRuntimeData]
+
 
 RE_APPLE = r"^favicon-apple-"
 RE_ICON = r"^favicon-(\d+x\d+)\..+"
@@ -28,97 +45,64 @@ RE_ICON = r"^favicon-(\d+x\d+)\..+"
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
-async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Initialize shared frontend state for config-entry setup.
-
-    Args:
-        hass (HomeAssistant): Home Assistant instance.
-        config (ConfigType): Loaded Home Assistant configuration.
-
-    Returns:
-        bool: Whether setup succeeded.
-    """
-    if not hass.data.get(DOMAIN):
-        hass.data.setdefault(DOMAIN, {})
-
-    if not hass.data[DOMAIN].get("resolve"):
-        hass.data[DOMAIN]["resolve"] = frontend.IndexView.resolve
-    if not hass.data[DOMAIN].get("manifest_icons"):
-        hass.data[DOMAIN]["manifest_icons"] = frontend.MANIFEST_JSON["icons"].copy()
-    if "manifest_names" not in hass.data[DOMAIN]:
-        hass.data[DOMAIN]["manifest_names"] = {
-            key: frontend.MANIFEST_JSON[key] for key in ("name", "short_name")
-        }
-    _LOGGER.debug("[async_setup] resolve: %s", hass.data[DOMAIN]["resolve"])
-    _LOGGER.debug("[async_setup] manifest_icons: %s", hass.data[DOMAIN]["manifest_icons"])
-
-    return True
-
-
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: FaviconConfigEntry) -> bool:
     """Set up from a config entry.
 
     Args:
         hass (HomeAssistant): Home Assistant instance.
-        entry (ConfigEntry): Entry containing the favicon settings.
+        entry (FaviconConfigEntry): Entry containing the favicon settings.
 
     Returns:
         bool: Whether setup succeeded.
     """
     _LOGGER.debug("[async_setup_entry] entry.data: %s", entry.data)
-    if not hass.data.get(DOMAIN):
-        hass.data.setdefault(DOMAIN, {})
-    entry_token = object()
-    hass.data[DOMAIN][_ACTIVE_ENTRY_LIFETIME] = entry_token
+    data = entry.runtime_data = FaviconRuntimeData(
+        resolve=frontend.IndexView.resolve,
+        manifest_icons=frontend.MANIFEST_JSON["icons"].copy(),
+        manifest_names={key: frontend.MANIFEST_JSON[key] for key in ("name", "short_name")},
+    )
 
-    async def update_listener(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
-        await _update_listener(hass, config_entry, entry_token)
+    async def update_listener(hass: HomeAssistant, config_entry: FaviconConfigEntry) -> None:
+        """Apply settings only while this entry lifetime remains active.
+
+        Args:
+            hass (HomeAssistant): Home Assistant instance.
+            config_entry (FaviconConfigEntry): Entry containing updated settings.
+        """
+        if not data.active or getattr(config_entry, "runtime_data", None) is not data:
+            return
+        await apply_hooks(hass, config_entry, dict(config_entry.data))
 
     entry.async_on_unload(entry.add_update_listener(update_listener))
     await update_listener(hass, entry)
     return True
 
 
-async def async_remove_entry(hass: HomeAssistant, _: ConfigEntry) -> bool:
-    """Restore the original frontend when removing the entry.
+async def async_remove_entry(hass: HomeAssistant, entry: FaviconConfigEntry) -> bool:
+    """Restore the original frontend when removing a loaded entry.
 
     Args:
         hass (HomeAssistant): Home Assistant instance.
+        entry (FaviconConfigEntry): Entry being removed, possibly already unloaded.
 
     Returns:
         bool: Whether the original frontend was restored.
     """
-    return remove_hooks(hass)
+    return remove_hooks(entry)
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: FaviconConfigEntry) -> bool:
     """Unload a config entry.
 
     Args:
         hass (HomeAssistant): Home Assistant instance.
-        entry (ConfigEntry): Entry being unloaded.
+        entry (FaviconConfigEntry): Entry being unloaded.
 
     Returns:
         bool: Whether unloading succeeded.
     """
     _LOGGER.info("Unloading: %s", entry.data)
-    return remove_hooks(hass)
-
-
-async def _update_listener(
-    hass: HomeAssistant, config_entry: ConfigEntry, entry_token: object
-) -> None:
-    """Apply updated config-entry settings.
-
-    Args:
-        hass (HomeAssistant): Home Assistant instance.
-        config_entry (ConfigEntry): Entry containing the updated settings.
-        entry_token (object): Token for the active config-entry lifetime.
-    """
-    data = hass.data.get(DOMAIN, {})
-    if data.get(_ACTIVE_ENTRY_LIFETIME) is not entry_token:
-        return
-    await apply_hooks(hass, dict(config_entry.data))
+    return remove_hooks(entry)
 
 
 def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping[str, Any]:
@@ -183,28 +167,30 @@ def find_icons(hass: HomeAssistant, path_str: str) -> MutableMapping[str, Any]:
     return icons
 
 
-async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]) -> bool:
+async def apply_hooks(
+    hass: HomeAssistant, entry: FaviconConfigEntry, config_data: MutableMapping[str, Any]
+) -> bool:
     """Apply frontend response and manifest customizations.
 
     Args:
         hass (HomeAssistant): Home Assistant instance.
+        entry (FaviconConfigEntry): Loaded entry owning the frontend state.
         config_data (MutableMapping[str, Any]): Favicon settings to apply.
 
     Returns:
         bool: Whether the customizations were applied.
     """
-    data = hass.data.setdefault(DOMAIN, {})
-    generation: int = data.get(_APPLY_GENERATION, 0) + 1
-    data[_APPLY_GENERATION] = generation
+    data = entry.runtime_data
+    data.generation += 1
+    generation = data.generation
     icons = await hass.loop.run_in_executor(
         None, find_icons, hass, config_data.get(CONF_ICON_PATH, None)
     )
-    if hass.data.get(DOMAIN, {}).get(_APPLY_GENERATION) != generation:
+    if not data.active or data.generation != generation:
         return True
     _LOGGER.debug("[apply_hooks] icons: %s", icons)
     title = config_data.get(CONF_TITLE, None)
     launch_icon_color = config_data.get(CONF_ICON_COLOR, None)
-    data = hass.data.get(DOMAIN, {})
 
     def customize_html(text: str) -> str:
         """Apply the configured branding to rendered HTML.
@@ -283,8 +269,12 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
         Returns:
             tuple[UrlMappingMatchInfo | None, set[str]]: Route and allowed methods.
         """
-        match_info, allowed_methods = await data["resolve"](self, request)
+        match_info, allowed_methods = await data.resolve(self, request)
         if match_info is None or self.hass is not hass:
+            return match_info, allowed_methods
+
+        resource = match_info.route.resource
+        if resource is None:
             return match_info, allowed_methods
 
         async def handle(request: web.Request) -> web.StreamResponse:
@@ -309,7 +299,7 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
         route = ResourceRoute(
             match_info.route.method,
             handle,
-            match_info.route.resource,
+            resource,
             expect_handler=match_info.route.handle_expect_header,
         )
         return UrlMappingMatchInfo(match_info, route), allowed_methods
@@ -319,36 +309,34 @@ async def apply_hooks(hass: HomeAssistant, config_data: MutableMapping[str, Any]
     if "manifest" in icons:
         frontend.add_manifest_json_key("icons", icons["manifest"])
     else:
-        frontend.add_manifest_json_key("icons", data["manifest_icons"].copy())
+        frontend.add_manifest_json_key("icons", data.manifest_icons.copy())
 
     if title:
         frontend.add_manifest_json_key("name", title)
         frontend.add_manifest_json_key("short_name", title)
     else:
-        for key, value in data["manifest_names"].items():
+        for key, value in data.manifest_names.items():
             frontend.add_manifest_json_key(key, value)
 
     return True
 
 
-def remove_hooks(hass: HomeAssistant) -> bool:
-    """Restore the original frontend routing and manifest.
+def remove_hooks(entry: FaviconConfigEntry) -> bool:
+    """Restore the original frontend routing and manifest once per lifetime.
 
     Args:
-        hass (HomeAssistant): Home Assistant instance.
+        entry (FaviconConfigEntry): Entry whose hooks should be removed.
 
     Returns:
         bool: Whether the original frontend was restored.
     """
-    data = hass.data.get(DOMAIN)
-    if not data:
+    data = getattr(entry, "runtime_data", None)
+    if data is None or not data.active:
         return True
-    data[_APPLY_GENERATION] = data.get(_APPLY_GENERATION, 0) + 1
-    data.pop(_ACTIVE_ENTRY_LIFETIME, None)
-    if "resolve" not in data or "manifest_icons" not in data:
-        return True
-    frontend.IndexView.resolve = data["resolve"]  # type: ignore[method-assign]
-    frontend.add_manifest_json_key("icons", data["manifest_icons"].copy())
-    for key, value in data["manifest_names"].items():
+    data.active = False
+    data.generation += 1
+    frontend.IndexView.resolve = data.resolve  # type: ignore[method-assign]
+    frontend.add_manifest_json_key("icons", data.manifest_icons.copy())
+    for key, value in data.manifest_names.items():
         frontend.add_manifest_json_key(key, value)
     return True
