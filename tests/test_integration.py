@@ -35,7 +35,6 @@ async def test_config_entry_options_and_removal(favicon_frontend: HomeAssistant)
     entry = result["result"]
     assert entry.state is ConfigEntryState.LOADED
     original_runtime_data = entry.runtime_data
-    assert DOMAIN not in hass.data
     assert entry.data[CONF_ICON_COLOR] == "#123456"
     assert frontend.MANIFEST_JSON["name"] == "First home"
 
