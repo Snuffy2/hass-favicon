@@ -1,6 +1,14 @@
 favicon
 =======
-[![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/hacs/integration)
+
+[![GitHub Downloads][downloads-shield]][releases]
+[![GitHub Latest Downloads][downloads-latest-shield]][releases]
+[![GitHub Release][releases-shield]][releases]
+[![GitHub Release Date][release-date-shield]][releases]
+[![GitHub Activity][commits-shield]][commits]
+[![Coverage][coverage-shield]][coverage]
+[![License][license-shield]](LICENSE)
+[![hacs][hacsbadge]][hacs]
 
 Change the gui page title, favicon, app icons, and launch icon color of your Home Assistant instance
 
@@ -79,3 +87,16 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, tests and pull req
 ## Attribution
 
 This project continues the now-deprecated [hass-favicon](https://github.com/thomasloven/hass-favicon) integration originally created by [Thomas Lovén](https://github.com/thomasloven). Thank you, Thomas, for creating the original integration and sharing it with the Home Assistant community.
+
+[downloads-shield]: https://img.shields.io/github/downloads/Snuffy2/hass-favicon/total?style=for-the-badge&label=total%20downloads
+[downloads-latest-shield]: https://img.shields.io/github/downloads-pre/Snuffy2/hass-favicon/latest/total?style=for-the-badge
+[releases]: https://github.com/Snuffy2/hass-favicon/releases
+[releases-shield]: https://img.shields.io/github/release/Snuffy2/hass-favicon.svg?style=for-the-badge
+[release-date-shield]: https://img.shields.io/github/release-date/Snuffy2/hass-favicon?style=for-the-badge
+[commits]: https://github.com/Snuffy2/hass-favicon/commits/main
+[commits-shield]: https://img.shields.io/github/last-commit/Snuffy2/hass-favicon?style=for-the-badge
+[license-shield]: https://img.shields.io/github/license/Snuffy2/hass-favicon?color=blue&style=for-the-badge
+[hacsbadge]: https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge
+[hacs]: https://hacs.xyz
+[coverage]: https://htmlpreview.github.io/?https://github.com/Snuffy2/hass-favicon/blob/python-coverage-comment-action-data/htmlcov/index.html
+[coverage-shield]: https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FSnuffy2%2Fhass-favicon%2Fpython-coverage-comment-action-data%2Fendpoint.json&style=for-the-badge
