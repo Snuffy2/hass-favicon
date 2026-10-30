@@ -212,6 +212,47 @@ async def test_entry_unload_restores_original_frontend(hass: HomeAssistant) -> N
     assert {key: frontend.MANIFEST_JSON[key] for key in original_names} == original_names
 
 
+@pytest.mark.parametrize(
+    "saved_state",
+    [
+        pytest.param(None, id="no-domain-data"),
+        pytest.param({}, id="empty-domain-data"),
+        pytest.param(
+            {"manifest_icons": [{"src": "/local/saved-icon.png"}], "manifest_names": {}},
+            id="missing-resolver",
+        ),
+        pytest.param(
+            {"resolve": lambda *_args, **_kwargs: None, "manifest_names": {}},
+            id="missing-manifest-icons",
+        ),
+    ],
+)
+async def test_remove_entry_without_complete_saved_frontend_state_is_safe(
+    hass: HomeAssistant, saved_state: dict[str, object] | None
+) -> None:
+    """Leave frontend state alone when removal has no complete restoration snapshot.
+
+    Args:
+        hass (HomeAssistant): Home Assistant test instance.
+        saved_state (dict[str, object] | None): Absent, empty, or incomplete saved state.
+    """
+    hass.data.pop(DOMAIN, None)
+    if saved_state is not None:
+        hass.data[DOMAIN] = saved_state
+
+    original_resolve = frontend.IndexView.resolve
+    original_manifest_icons = frontend.MANIFEST_JSON["icons"].copy()
+    original_manifest_names = {key: frontend.MANIFEST_JSON[key] for key in ("name", "short_name")}
+    entry = MockConfigEntry(domain=DOMAIN)
+
+    assert await async_remove_entry(hass, entry) is True
+    assert frontend.IndexView.resolve is original_resolve
+    assert frontend.MANIFEST_JSON["icons"] == original_manifest_icons
+    assert {
+        key: frontend.MANIFEST_JSON[key] for key in original_manifest_names
+    } == original_manifest_names
+
+
 async def test_queued_listener_ignores_unloaded_entry(hass: HomeAssistant) -> None:
     """Ignore a queued callback after its entry has unloaded.
 
