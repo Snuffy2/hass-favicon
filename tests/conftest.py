@@ -55,4 +55,5 @@ async def favicon_frontend(
             yield hass
         finally:
             frontend.IndexView.resolve = original_resolve
-            frontend.MANIFEST_JSON = frontend.Manifest(manifest)
+            for key, value in manifest.items():
+                frontend.MANIFEST_JSON.update_key(key, value)
