@@ -7,7 +7,7 @@ import re
 from homeassistant.core import HomeAssistant
 from playwright.async_api import Page, async_playwright, expect
 import pytest
-from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
+from pytest_homeassistant.typing import ClientSessionGenerator
 
 from tests.test_e2e import configure_favicon, launch_logo_svg
 

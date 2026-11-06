@@ -12,8 +12,8 @@ from homeassistant.components import frontend
 from homeassistant.core import HomeAssistant
 from jinja2 import Template
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
+from pytest_homeassistant.common import MockConfigEntry
+from pytest_homeassistant.typing import ClientSessionGenerator
 
 from custom_components.favicon import async_setup_entry
 from custom_components.favicon.const import CONF_TITLE, DOMAIN
